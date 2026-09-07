@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Plate & VIN Lookup</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --text: #1a1d21;
+    --muted: #6b7280;
+    --border: #e2e4e8;
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --danger: #b91c1c;
+    --ok: #15803d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --card: #1f2227;
+      --text: #e8e9eb;
+      --muted: #9aa0aa;
+      --border: #30343b;
+      --accent: #3b82f6;
+      --accent-text: #0b0d10;
+      --danger: #f87171;
+      --ok: #4ade80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 2.5rem 1rem;
+  }
+  main { width: 100%; max-width: 640px; }
+  .top-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  p.sub { color: var(--muted); margin-top: 0; margin-bottom: 1.5rem; font-size: 0.9rem; }
+  #lang-select {
+    width: auto;
+    min-width: 130px;
+    padding: 0.4rem 0.6rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font-size: 0.85rem;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+  .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+  .tab-btn {
+    flex: 1;
+    padding: 0.6rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  .tab-btn.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  form { display: flex; flex-direction: column; gap: 0.75rem; }
+  .row { display: flex; gap: 0.75rem; }
+  label { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem; display: block; }
+  input, select {
+    width: 100%;
+    padding: 0.6rem 0.7rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.95rem;
+  }
+  button.submit {
+    margin-top: 0.25rem;
+    padding: 0.7rem;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 0.95rem;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  button.submit:disabled { opacity: 0.6; cursor: default; }
+  .hidden { display: none !important; }
+  #results { margin-top: 1.25rem; }
+  .result-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+  }
+  .result-card h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+  .kv { display: grid; grid-template-columns: 140px 1fr; gap: 0.3rem 0.75rem; font-size: 0.88rem; }
+  .kv div.k { color: var(--muted); }
+  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+  .badge.ok { background: rgba(21,128,61,0.15); color: var(--ok); }
+  .badge.danger { background: rgba(185,28,28,0.15); color: var(--danger); }
+  .empty { color: var(--muted); font-size: 0.9rem; padding: 0.5rem 0; }
+  .error { color: var(--danger); font-size: 0.9rem; padding: 0.5rem 0; }
+  .loading { color: var(--muted); font-size: 0.9rem; }
+  .note { font-size: 0.78rem; color: var(--muted); margin-top: 0.75rem; line-height: 1.4; }
+  .pay-btn {
+    margin-top: 0.75rem;
+    width: 100%;
+    padding: 0.55rem;
+    border-radius: 8px;
+    border: none;
+    background: var(--danger);
+    color: #fff;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #toast {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%) translateY(0);
+    background: var(--text);
+    color: var(--bg);
+    padding: 0.7rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    max-width: 90vw;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 100;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top-row">
+    <div>
+      <h1 data-i18n="title">🚗 Plate & VIN Lookup</h1>
+      <p class="sub" data-i18n="subtitle">Check NYC parking/camera violations by plate, or NY DMV registration status by VIN.</p>
+    </div>
+    <select id="lang-select" aria-label="Language">
+      <option value="en">🇺🇸 English</option>
+      <option value="ru">🇷🇺 Русский</option>
+      <option value="ka">🇬🇪 ქართული</option>
+      <option value="es">🇪🇸 Español</option>
+    </select>
+  </div>
+
+  <p class="note" style="margin-top:-0.5rem; margin-bottom:1rem;">
+    <span data-i18n="autofillNote">Optional: install</span>
+    <a href="/citypay-autofill.user.js" data-i18n="autofillLinkText">this userscript</a>
+    <span data-i18n="autofillNote2">(needs the free Tampermonkey browser extension) to have the "Pay" button auto-fill CityPay's violation number field for you.</span>
+  </p>
+
+  <div class="card">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="plate" type="button" data-i18n="tabPlate">Plate → Violations</button>
+      <button class="tab-btn" data-tab="vin" type="button" data-i18n="tabVin">VIN → Registration</button>
+    </div>
+
+    <form id="plate-form">
+      <div class="row">
+        <div style="flex:2;">
+          <label for="plate" data-i18n="plateLabel">Plate Number</label>
+          <input id="plate" name="plate" placeholder="e.g. LXH1203" required maxlength="10" autocomplete="off" />
+        </div>
+        <div style="flex:1;">
+          <label for="state" data-i18n="stateLabel">State</label>
+          <select id="state" name="state">
+            <option value="NY" selected>NY</option>
+            <option value="NJ">NJ</option>
+            <option value="CT">CT</option>
+            <option value="PA">PA</option>
+            <option value="FL">FL</option>
+            <option value="CA">CA</option>
+            <option value="TX">TX</option>
+          </select>
+        </div>
+      </div>
+      <button class="submit" type="submit" data-i18n="checkViolationsBtn">Check Violations</button>
+    </form>
+
+    <form id="vin-form" class="hidden">
+      <div>
+        <label for="vin" data-i18n="vinLabel">VIN</label>
+        <input id="vin" name="vin" placeholder="e.g. JTDZN3EU6D3199758" required maxlength="17" autocomplete="off" />
+      </div>
+      <button class="submit" type="submit" data-i18n="checkRegistrationBtn">Check Registration</button>
+    </form>
+  </div>
+
+  <div id="results"></div>
+</main>
+<div id="toast"></div>
+
+<script>
+  const I18N = {
+    en: {
+      title: '🚗 Plate & VIN Lookup',
+      subtitle: 'Check NYC parking/camera violations by plate, or NY DMV registration status by VIN.',
+      tabPlate: 'Plate → Violations',
+      tabVin: 'VIN → Registration',
+      plateLabel: 'Plate Number',
+      stateLabel: 'State',
+      vinLabel: 'VIN',
+      checkViolationsBtn: 'Check Violations',
+      checkRegistrationBtn: 'Check Registration',
+      loadingViolations: 'Checking violations…',
+      loadingRegistration: 'Checking registration…',
+      requestFailed: 'Request failed.',
+      networkError: 'Network error: {msg}',
+      noViolations: 'No parking/camera violations on file for {plate} / {state}.',
+      noViolationsNote: "Note: this checks NYC's public Open Data feed, which can lag real-time tickets by days to weeks, and only covers NYC-issued parking/camera violations (not other cities/states, tolls, or private lots).",
+      violationsFound: '{count} violation(s) found for {plate} / {state}',
+      outstandingCount: '{count} outstanding',
+      totalDue: 'total due: ${amount}',
+      paidCount: '{count} paid/resolved',
+      noOutstanding: '✅ No outstanding balance — all violations on file are paid/resolved.',
+      showPaid: 'Show {count} paid/resolved violation(s)',
+      hidePaid: 'Hide paid/resolved violation(s)',
+      kSummons: 'Summons #',
+      kIssueDate: 'Issue date',
+      kFine: 'Fine',
+      kPenalty: 'Penalty',
+      kInterest: 'Interest',
+      kReduction: 'Reduction',
+      kPaid: 'Paid',
+      kAmountDue: 'Amount due',
+      kStatus: 'Status',
+      kPrecinct: 'Precinct',
+      kCounty: 'County',
+      kAgency: 'Agency',
+      payBtn: 'Pay ${amount} on CityPay',
+      payToast: 'Summons # {num} copied — paste it into the violation number field on CityPay.',
+      autofillNote: 'Optional: install',
+      autofillLinkText: 'this userscript',
+      autofillNote2: '(needs the free Tampermonkey browser extension) to have the "Pay" button auto-fill CityPay\'s violation number field for you.',
+      badgeDue: '${amount} due',
+      badgePaid: 'PAID',
+      noRegistration: 'No registration record found for VIN {vin}.',
+      registrationFor: 'Registration for VIN {vin}',
+      kColor: 'Color',
+      kClass: 'Class',
+      kLocation: 'Location',
+      kValidFrom: 'Valid from',
+      kExpires: 'Expires',
+      registrationSourceNote: "Source: NY DMV Open Data (Socrata, dataset w4pv-hbkt). VIN-only lookup — plate-to-registration linkage is restricted from public disclosure under the federal Driver's Privacy Protection Act.",
+      badgeClear: 'CLEAR',
+      genericViolation: 'Violation',
+    },
+    ru: {
+      title: '🚗 Проверка номера и VIN',
+      subtitle: 'Проверьте штрафы за парковку/камеры в Нью-Йорке по номеру, или статус регистрации DMV штата Нью-Йорк по VIN.',
+      tabPlate: 'Номер → Штрафы',
+      tabVin: 'VIN → Регистрация',
+      plateLabel: 'Номерной знак',
+      stateLabel: 'Штат',
+      vinLabel: 'VIN',
+      checkViolationsBtn: 'Проверить штрафы',
+      checkRegistrationBtn: 'Проверить регистрацию',
+      loadingViolations: 'Проверка штрафов…',
+      loadingRegistration: 'Проверка регистрации…',
+      requestFailed: 'Запрос не выполнен.',
+      networkError: 'Ошибка сети: {msg}',
+      noViolations: 'Нет штрафов за парковку/камеры для {plate} / {state}.',
+      noViolationsNote: 'Примечание: проверка идёт по открытым данным Нью-Йорка, которые могут отставать от реального времени на дни или недели, и охватывают только штрафы, выписанные в Нью-Йорке (не в других городах/штатах, не платные дороги и не частные парковки).',
+      violationsFound: 'Найдено штрафов: {count} для {plate} / {state}',
+      outstandingCount: 'неоплаченных: {count}',
+      totalDue: 'к оплате: ${amount}',
+      paidCount: 'оплачено/закрыто: {count}',
+      noOutstanding: '✅ Задолженности нет — все штрафы оплачены или закрыты.',
+      showPaid: 'Показать оплаченные/закрытые штрафы ({count})',
+      hidePaid: 'Скрыть оплаченные/закрытые штрафы',
+      kSummons: '№ повестки',
+      kIssueDate: 'Дата выписки',
+      kFine: 'Штраф',
+      kPenalty: 'Пеня',
+      kInterest: 'Проценты',
+      kReduction: 'Снижение',
+      kPaid: 'Оплачено',
+      kAmountDue: 'К оплате',
+      kStatus: 'Статус',
+      kPrecinct: 'Участок',
+      kCounty: 'Округ',
+      kAgency: 'Ведомство',
+      payBtn: 'Оплатить ${amount} на CityPay',
+      payToast: 'Номер повестки {num} скопирован — вставьте его в поле номера нарушения на CityPay.',
+      autofillNote: 'Опционально: установите',
+      autofillLinkText: 'этот скрипт',
+      autofillNote2: '(нужно бесплатное расширение Tampermonkey), чтобы кнопка "Оплатить" сама подставляла номер нарушения на CityPay.',
+      badgeDue: 'к оплате ${amount}',
+      badgePaid: 'ОПЛАЧЕНО',
+      noRegistration: 'Регистрация по VIN {vin} не найдена.',
+      registrationFor: 'Регистрация для VIN {vin}',
+      kColor: 'Цвет',
+      kClass: 'Класс',
+      kLocation: 'Местоположение',
+      kValidFrom: 'Действует с',
+      kExpires: 'Истекает',
+      registrationSourceNote: 'Источник: открытые данные NY DMV (Socrata, датасет w4pv-hbkt). Поиск только по VIN — связь номера с регистрацией не раскрывается публично согласно федеральному закону о защите конфиденциальности водителей (DPPA).',
+      badgeClear: 'ЧИСТО',
+      genericViolation: 'Нарушение',
+    },
+    ka: {
+      title: '🚗 ნომრისა და VIN-ის შემოწმება',
+      subtitle: 'შეამოწმეთ ნიუ-იორკის პარკინგის/კამერის დარღვევები ნომრით, ან NY DMV-ის რეგისტრაციის სტატუსი VIN-ით.',
+      tabPlate: 'ნომერი → დარღვევები',
+      tabVin: 'VIN → რეგისტრაცია',
+      plateLabel: 'სანომრე ნიშანი',
+      stateLabel: 'შტატი',
+      vinLabel: 'VIN',
+      checkViolationsBtn: 'დარღვევების შემოწმება',
+      checkRegistrationBtn: 'რეგისტრაციის შემოწმება',
+      loadingViolations: 'დარღვევების შემოწმება…',
+      loadingRegistration: 'რეგისტრაციის შემოწმება…',
+      requestFailed: 'მოთხოვნა ვერ შესრულდა.',
+      networkError: 'ქსელის შეცდომა: {msg}',
+      noViolations: 'დარღვევები არ მოიძებნა {plate} / {state}-სთვის.',
+      noViolationsNote: 'შენიშვნა: ეს ამოწმებს ნიუ-იორკის ღია მონაცემებს, რომლებიც შეიძლება რეალურ დროს ჩამორჩეს დღეებით ან კვირებით და მოიცავს მხოლოდ ნიუ-იორკში გამოწერილ დარღვევებს (არა სხვა ქალაქებში/შტატებში, გადასახადებში ან კერძო პარკინგებში გამოწერილს).',
+      violationsFound: 'ნაპოვნია {count} დარღვევა {plate} / {state}-სთვის',
+      outstandingCount: 'გადაუხდელი: {count}',
+      totalDue: 'გადასახდელი: ${amount}',
+      paidCount: 'გადახდილი/დახურული: {count}',
+      noOutstanding: '✅ გადასახდელი თანხა არ არის — ყველა დარღვევა გადახდილია ან დახურულია.',
+      showPaid: 'გადახდილი/დახურული დარღვევების ჩვენება ({count})',
+      hidePaid: 'გადახდილი/დახურული დარღვევების დამალვა',
+      kSummons: 'ქვითრის №',
+      kIssueDate: 'გამოწერის თარიღი',
+      kFine: 'ჯარიმა',
+      kPenalty: 'პირგასამტეხლო',
+      kInterest: 'პროცენტი',
+      kReduction: 'შემცირება',
+      kPaid: 'გადახდილი',
+      kAmountDue: 'გადასახდელი',
+      kStatus: 'სტატუსი',
+      kPrecinct: 'უბანი',
+      kCounty: 'ოლქი',
+      kAgency: 'უწყება',
+      payBtn: 'გადახდა $${amount} — CityPay',
+      payToast: 'ქვითრის № {num} დაკოპირდა — ჩასვით ის CityPay-ის დარღვევის ნომრის ველში.',
+      autofillNote: 'სურვილისამებრ: დააინსტალირეთ',
+      autofillLinkText: 'ეს სკრიპტი',
+      autofillNote2: '(საჭიროა უფასო Tampermonkey ბრაუზერის გაფართოება), რომ "გადახდის" ღილაკმა თავად შეავსოს დარღვევის ნომრის ველი CityPay-ზე.',
+      badgeDue: 'გადასახდელი $${amount}',
+      badgePaid: 'გადახდილია',
+      noRegistration: 'რეგისტრაცია VIN {vin}-სთვის ვერ მოიძებნა.',
+      registrationFor: 'რეგისტრაცია VIN {vin}-სთვის',
+      kColor: 'ფერი',
+      kClass: 'კლასი',
+      kLocation: 'მდებარეობა',
+      kValidFrom: 'ძალაშია',
+      kExpires: 'იწურება',
+      registrationSourceNote: 'წყარო: NY DMV-ის ღია მონაცემები (Socrata, ნაკრები w4pv-hbkt). ძებნა მხოლოდ VIN-ით — ნომრისა და რეგისტრაციის კავშირი საჯაროდ არ ვრცელდება ფედერალური კანონის (DPPA) შესაბამისად.',
+      badgeClear: 'სუფთაა',
+      genericViolation: 'დარღვევა',
+    },
+    es: {
+      title: '🚗 Consulta de matrícula y VIN',
+      subtitle: 'Consulta multas de estacionamiento/cámaras de NYC por matrícula, o el estado de registro del DMV de NY por VIN.',
+      tabPlate: 'Matrícula → Multas',
+      tabVin: 'VIN → Registro',
+      plateLabel: 'Número de matrícula',
+      stateLabel: 'Estado',
+      vinLabel: 'VIN',
+      checkViolationsBtn: 'Consultar multas',
+      checkRegistrationBtn: 'Consultar registro',
+      loadingViolations: 'Consultando multas…',
+      loadingRegistration: 'Consultando registro…',
+      requestFailed: 'La solicitud falló.',
+      networkError: 'Error de red: {msg}',
+      noViolations: 'No hay multas de estacionamiento/cámaras registradas para {plate} / {state}.',
+      noViolationsNote: 'Nota: esto consulta los datos abiertos públicos de NYC, que pueden tener un retraso de días a semanas respecto al tiempo real, y solo cubre multas emitidas en NYC (no en otras ciudades/estados, peajes o estacionamientos privados).',
+      violationsFound: 'Se encontraron {count} multa(s) para {plate} / {state}',
+      outstandingCount: '{count} pendiente(s)',
+      totalDue: 'total pendiente: ${amount}',
+      paidCount: '{count} pagada(s)/resuelta(s)',
+      noOutstanding: '✅ Sin saldo pendiente — todas las multas registradas están pagadas o resueltas.',
+      showPaid: 'Mostrar {count} multa(s) pagada(s)/resuelta(s)',
+      hidePaid: 'Ocultar multas pagadas/resueltas',
+      kSummons: 'N.º de citación',
+      kIssueDate: 'Fecha de emisión',
+      kFine: 'Multa',
+      kPenalty: 'Recargo',
+      kInterest: 'Interés',
+      kReduction: 'Reducción',
+      kPaid: 'Pagado',
+      kAmountDue: 'Monto adeudado',
+      kStatus: 'Estado',
+      kPrecinct: 'Comisaría',
+      kCounty: 'Condado',
+      kAgency: 'Agencia',
+      payBtn: 'Pagar ${amount} en CityPay',
+      payToast: 'N.º de citación {num} copiado — pégalo en el campo de número de infracción en CityPay.',
+      autofillNote: 'Opcional: instala',
+      autofillLinkText: 'este userscript',
+      autofillNote2: '(requiere la extensión gratuita Tampermonkey) para que el botón "Pagar" rellene automáticamente el campo de número de infracción en CityPay.',
+      badgeDue: '${amount} pendiente',
+      badgePaid: 'PAGADO',
+      noRegistration: 'No se encontró registro para el VIN {vin}.',
+      registrationFor: 'Registro para el VIN {vin}',
+      kColor: 'Color',
+      kClass: 'Clase',
+      kLocation: 'Ubicación',
+      kValidFrom: 'Válido desde',
+      kExpires: 'Vence',
+      registrationSourceNote: 'Fuente: Datos Abiertos del DMV de NY (Socrata, conjunto w4pv-hbkt). Búsqueda solo por VIN — la vinculación entre matrícula y registro no se divulga públicamente conforme a la ley federal de protección de privacidad del conductor (DPPA).',
+      badgeClear: 'SIN INCIDENCIAS',
+      genericViolation: 'Infracción',
+    },
+  };
+
+  // NYC DOF violation descriptions come back as raw English strings from the API
+  // (e.g. "NO PARKING-STREET CLEANING") — they aren't part of the static UI strings above,
+  // so they need their own lookup. Keyed by the exact uppercase string the API returns.
+  // Anything not in this table just falls back to the original English text.
+  const VIOLATION_NAMES = {
+    'NO PARKING-STREET CLEANING': {
+      ru: 'Стоянка запрещена — уборка улицы',
+      ka: 'პარკინგი აკრძალულია — ქუჩის დასუფთავება',
+      es: 'Prohibido estacionar — limpieza de calles',
+    },
+    'NO PARKING-DAY/TIME LIMITS': {
+      ru: 'Стоянка запрещена — ограничение по дням/времени',
+      ka: 'პარკინგი აკრძალულია — დღის/დროის შეზღუდვა',
+      es: 'Prohibido estacionar — límite de día/hora',
+    },
+    'NO STANDING-DAY/TIME LIMITS': {
+      ru: 'Остановка запрещена — ограничение по дням/времени',
+      ka: 'გაჩერება აკრძალულია — დღის/დროის შეზღუდვა',
+      es: 'Prohibido detenerse — límite de día/hora',
+    },
+    'NO STANDING-BUS STOP': {
+      ru: 'Остановка запрещена — автобусная остановка',
+      ka: 'გაჩერება აკრძალულია — ავტობუსის გაჩერება',
+      es: 'Prohibido detenerse — parada de autobús',
+    },
+    'NO STANDING-EXC. TRUCK LOADING': {
+      ru: 'Остановка запрещена, кроме погрузки грузовиков',
+      ka: 'გაჩერება აკრძალულია, გარდა სატვირთოს დატვირთვისა',
+      es: 'Prohibido detenerse, excepto carga de camiones',
+    },
+    'OBSTRUCTING DRIVEWAY': {
+      ru: 'Блокирование въезда',
+      ka: 'შესასვლელის გადაკეტვა',
+      es: 'Obstrucción de entrada de vehículos',
+    },
+    'EXPIRED MUNI METER': {
+      ru: 'Истёк срок оплаты паркомата',
+      ka: 'ვადაგასული საპარკინგო მრიცხველი',
+      es: 'Parquímetro municipal vencido',
+    },
+    'FAIL TO DSPLY MUNI METER RECPT': {
+      ru: 'Не выставлен чек паркомата',
+      ka: 'საპარკინგო მრიცხველის ქვითარი არ არის გამოტანილი',
+      es: 'No exhibió el recibo del parquímetro',
+    },
+    'FAILURE TO STOP AT RED LIGHT': {
+      ru: 'Проезд на красный свет',
+      ka: 'წითელ შუქზე გავლა',
+      es: 'No detenerse en luz roja',
+    },
+    'PHTO SCHOOL ZN SPEED VIOLATION': {
+      ru: 'Превышение скорости у школы (камера)',
+      ka: 'სიჩქარის გადაჭარბება სკოლის ზონაში (კამერა)',
+      es: 'Exceso de velocidad en zona escolar (cámara)',
+    },
+    'VIN OBSCURED': {
+      ru: 'VIN-номер скрыт/не читается',
+      ka: 'VIN-კოდი დაფარულია/არ იკითხება',
+      es: 'VIN oculto/ilegible',
+    },
+  };
+
+  function translateViolation(name) {
+    if (!name) return t('genericViolation');
+    const key = name.trim().toUpperCase();
+    const entry = VIOLATION_NAMES[key];
+    if (entry && entry[currentLang]) return entry[currentLang];
+    return name; // fall back to the original English description if not in our table
+  }
+
+  let currentLang = localStorage.getItem('lang') || 'en';
+  let lastRender = null; // { type: 'violations'|'registration', data } — used to re-render on lang switch
+
+  function t(key, vars) {
+    let str = (I18N[currentLang] && I18N[currentLang][key]) ?? I18N.en[key] ?? key;
+    if (vars) {
+      Object.keys(vars).forEach((k) => {
+        str = str.replace(`{${k}}`, vars[k]);
+      });
+    }
+    return str;
+  }
+
+  function applyStaticTranslations() {
+    document.documentElement.lang = currentLang;
+    document.querySelectorAll('[data-i18n]').forEach((el) => {
+      el.textContent = t(el.getAttribute('data-i18n'));
+    });
+  }
+
+  const langSelect = document.getElementById('lang-select');
+  langSelect.value = currentLang;
+  langSelect.addEventListener('change', () => {
+    currentLang = langSelect.value;
+    localStorage.setItem('lang', currentLang);
+    applyStaticTranslations();
+    if (lastRender?.type === 'violations') renderViolations(lastRender.data);
+    else if (lastRender?.type === 'registration') renderRegistration(lastRender.data);
+  });
+
+  applyStaticTranslations();
+
+  const plateTab = document.querySelector('[data-tab="plate"]');
+  const vinTab = document.querySelector('[data-tab="vin"]');
+  const plateForm = document.getElementById('plate-form');
+  const vinForm = document.getElementById('vin-form');
+  const results = document.getElementById('results');
+  const toastEl = document.getElementById('toast');
+  const CITYPAY_URL = 'https://a836-citypay.nyc.gov/citypay/Parking';
+
+  function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => toastEl.classList.remove('show'), 4000);
+  }
+
+  results.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.pay-btn');
+    if (!btn) return;
+    const summons = btn.dataset.summons;
+    try {
+      await navigator.clipboard.writeText(summons);
+    } catch {
+      // clipboard permissions can be denied — the summons # is still visible on the card
+    }
+    showToast(t('payToast', { num: summons }));
+    // The hash (#summons=...) never reaches CityPay's server — it's purely a same-browser
+    // handoff read by the optional userscript (citypay-autofill.user.js). Without that
+    // script installed, the hash is simply ignored and the clipboard copy above still works.
+    window.open(`${CITYPAY_URL}#summons=${encodeURIComponent(summons)}`, '_blank', 'noopener');
+  });
+
+  plateTab.addEventListener('click', () => switchTab('plate'));
+  vinTab.addEventListener('click', () => switchTab('vin'));
+
+  function switchTab(tab) {
+    const isPlate = tab === 'plate';
+    plateTab.classList.toggle('active', isPlate);
+    vinTab.classList.toggle('active', !isPlate);
+    plateForm.classList.toggle('hidden', !isPlate);
+    vinForm.classList.toggle('hidden', isPlate);
+    results.innerHTML = '';
+    lastRender = null;
+  }
+
+  function escapeHtml(str) {
+    return String(str ?? '').replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+
+  plateForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const plate = document.getElementById('plate').value.trim();
+    const state = document.getElementById('state').value;
+    if (!plate) return;
+
+    setLoading(t('loadingViolations'));
+    try {
+      const res = await fetch(`/api/violations?plate=${encodeURIComponent(plate)}&state=${encodeURIComponent(state)}`);
+      const data = await res.json();
+      if (!res.ok) return setError(data.error || t('requestFailed'));
+      lastRender = { type: 'violations', data };
+      renderViolations(data);
+    } catch (err) {
+      setError(t('networkError', { msg: err.message }));
+    }
+  });
+
+  vinForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const vin = document.getElementById('vin').value.trim();
+    if (!vin) return;
+
+    setLoading(t('loadingRegistration'));
+    try {
+      const res = await fetch(`/api/registration?vin=${encodeURIComponent(vin)}`);
+      const data = await res.json();
+      if (!res.ok) return setError(data.error || t('requestFailed'));
+      lastRender = { type: 'registration', data };
+      renderRegistration(data);
+    } catch (err) {
+      setError(t('networkError', { msg: err.message }));
+    }
+  });
+
+  function setLoading(msg) {
+    results.innerHTML = `<div class="loading">${escapeHtml(msg)}</div>`;
+  }
+
+  function setError(msg) {
+    results.innerHTML = `<div class="error">⚠️ ${escapeHtml(msg)}</div>`;
+  }
+
+  function renderViolations(data) {
+    if (!data.count) {
+      results.innerHTML = `
+        <div class="empty">
+          ✅ ${t('noViolations', { plate: escapeHtml(data.plate), state: escapeHtml(data.state) })}
+          <div class="note">${t('noViolationsNote')}</div>
+        </div>`;
+      return;
+    }
+
+    const totalDue = data.violations.reduce((sum, v) => sum + (parseFloat(v.amount_due) || 0), 0);
+    const outstanding = data.violations.filter((v) => (parseFloat(v.amount_due) || 0) > 0);
+    const paid = data.violations.filter((v) => (parseFloat(v.amount_due) || 0) === 0);
+
+    const violationCard = (v) => {
+      const due = parseFloat(v.amount_due) || 0;
+      const dueBadge = due > 0
+        ? `<span class="badge danger">${t('badgeDue', { amount: escapeHtml(v.amount_due) })}</span>`
+        : `<span class="badge ok">${t('badgePaid')}</span>`;
+      // CityPay's search form has no URL parameters to pre-fill the violation number
+      // (confirmed: plain POST form, no query-string handling in the page JS), so the best
+      // we can do is copy the summons # for the client and hand them off to paste it in.
+      const payButton = due > 0
+        ? `<button type="button" class="pay-btn" data-summons="${escapeHtml(v.summons_number)}">${t('payBtn', { amount: escapeHtml(v.amount_due) })}</button>`
+        : '';
+      return `
+      <div class="result-card">
+        <h3>${escapeHtml(translateViolation(v.violation))} ${dueBadge}</h3>
+        <div class="kv">
+          <div class="k">${t('kSummons')}</div><div>${escapeHtml(v.summons_number)}</div>
+          <div class="k">${t('kIssueDate')}</div><div>${escapeHtml(v.issue_date)} ${escapeHtml(v.violation_time || '')}</div>
+          <div class="k">${t('kFine')}</div><div>$${escapeHtml(v.fine_amount || '0')}</div>
+          <div class="k">${t('kPenalty')}</div><div>$${escapeHtml(v.penalty_amount || '0')}</div>
+          <div class="k">${t('kInterest')}</div><div>$${escapeHtml(v.interest_amount || '0')}</div>
+          <div class="k">${t('kReduction')}</div><div>$${escapeHtml(v.reduction_amount || '0')}</div>
+          <div class="k">${t('kPaid')}</div><div>$${escapeHtml(v.payment_amount || '0')}</div>
+          <div class="k">${t('kAmountDue')}</div><div><strong>$${escapeHtml(v.amount_due || '0')}</strong></div>
+          <div class="k">${t('kStatus')}</div><div>${escapeHtml(v.violation_status || '—')}</div>
+          <div class="k">${t('kPrecinct')}</div><div>${escapeHtml(v.precinct || '—')}</div>
+          <div class="k">${t('kCounty')}</div><div>${escapeHtml(v.county || '—')}</div>
+          <div class="k">${t('kAgency')}</div><div>${escapeHtml(v.issuing_agency || '—')}</div>
+        </div>
+        ${payButton}
+      </div>`;
+    };
+
+    const outstandingCards = outstanding.map(violationCard).join('')
+      || `<div class="empty">${t('noOutstanding')}</div>`;
+    const paidCards = paid.map(violationCard).join('');
+
+    results.innerHTML = `
+      <div style="margin-bottom:0.5rem; font-size:0.9rem; color:var(--muted);">
+        ${t('violationsFound', { count: data.count, plate: escapeHtml(data.plate), state: escapeHtml(data.state) })}
+        — <span style="color:var(--danger); font-weight:600;">${t('outstandingCount', { count: outstanding.length })}</span>
+        (${t('totalDue', { amount: totalDue.toFixed(2) })}), <span style="color:var(--ok); font-weight:600;">${t('paidCount', { count: paid.length })}</span>
+      </div>
+      ${outstandingCards}
+      ${paid.length ? `
+        <button type="button" class="tab-btn" id="toggle-paid" style="width:100%; margin-top:0.5rem;">
+          ${t('showPaid', { count: paid.length })}
+        </button>
+        <div id="paid-section" class="hidden" style="margin-top:0.75rem;">${paidCards}</div>
+      ` : ''}`;
+
+    const toggleBtn = document.getElementById('toggle-paid');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => {
+        const section = document.getElementById('paid-section');
+        const nowHidden = section.classList.toggle('hidden');
+        toggleBtn.textContent = nowHidden
+          ? t('showPaid', { count: paid.length })
+          : t('hidePaid');
+      });
+    }
+  }
+
+  function renderRegistration(data) {
+    if (!data.count) {
+      results.innerHTML = `<div class="empty">${t('noRegistration', { vin: escapeHtml(data.vin) })}</div>`;
+      return;
+    }
+
+    const cards = data.registrations.map((r) => {
+      const flags = ['scofflaw_indicator', 'suspension_indicator', 'revocation_indicator']
+        .filter((k) => r[k] === 'Y');
+      const flagBadges = flags.length
+        ? flags.map((f) => `<span class="badge danger">${f.replace('_indicator', '').toUpperCase()}</span>`).join(' ')
+        : `<span class="badge ok">${t('badgeClear')}</span>`;
+
+      return `
+      <div class="result-card">
+        <h3>${escapeHtml(r.model_year)} ${escapeHtml(r.make)} ${escapeHtml(r.body_type)} ${flagBadges}</h3>
+        <div class="kv">
+          <div class="k">${t('kColor')}</div><div>${escapeHtml(r.color || '—')}</div>
+          <div class="k">${t('kClass')}</div><div>${escapeHtml(r.registration_class)}</div>
+          <div class="k">${t('kLocation')}</div><div>${escapeHtml(r.city)}, ${escapeHtml(r.state)} ${escapeHtml(r.zip)} (${escapeHtml(r.county)})</div>
+          <div class="k">${t('kValidFrom')}</div><div>${escapeHtml((r.reg_valid_date || '').slice(0,10))}</div>
+          <div class="k">${t('kExpires')}</div><div>${escapeHtml((r.reg_expiration_date || '').slice(0,10))}</div>
+        </div>
+      </div>`;
+    }).join('');
+
+    results.innerHTML = `
+      <div style="margin-bottom:0.5rem; font-size:0.9rem; color:var(--muted);">
+        ${t('registrationFor', { vin: escapeHtml(data.vin) })}
+      </div>
+      ${cards}
+      <div class="note">${t('registrationSourceNote')}</div>`;
+  }
+</script>
+</body>
+</html>
