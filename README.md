@@ -1,5 +1,10 @@
 # Plate & VIN Lookup App
 
+**→ Read [CONTEXT.md](CONTEXT.md) first, especially if you're an AI assistant picking this
+up in a new session.** It documents non-obvious gotchas (a wrong-but-plausible dataset ID
+that silently returns empty results, why CityPay can't be automated, decisions already made
+and rejected) that aren't visible from the code alone.
+
 Monorepo with two projects:
 
 - **[server/](server/)** — Node/Express backend + web frontend.
@@ -28,5 +33,5 @@ npx expo start --lan                                 # then open in Expo Go on y
 `mobile/src/api.ts` has `API_BASE_URL` hardcoded to a LAN IP for phone testing — update it to
 match whatever machine is running `server/`.
 
-Postgres: not yet installed/configured locally as of this commit — see conversation history
-for the plan (custom email/password + Google OAuth, no third-party auth provider).
+Postgres: not yet installed/configured locally as of this commit — see [CONTEXT.md](CONTEXT.md)
+for the full plan (custom email/password + Google OAuth, no third-party auth provider).
