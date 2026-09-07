@@ -15,23 +15,29 @@ Monorepo with two projects:
 
 ## Status / next steps
 
-Currently a working plate & VIN lookup tool (web + mobile), no accounts yet. In progress:
-user accounts (email/password + Google sign-in), a Postgres database, saved cars per user,
-an hourly cron job that re-checks all saved cars for new violations, and push notifications
-when a new fine appears.
+Working plate & VIN lookup tool (anonymous, web + mobile) **plus** accounts on the web side:
+sign up / log in, save multiple cars (nickname + plate/state + optional VIN), see their
+fines and registration, and an hourly cron job that rechecks every saved car and records
+(and attempts to push-notify) any newly-found violation. See [CONTEXT.md](CONTEXT.md) for
+the full picture, including what's explicitly not done yet — mobile screens for
+accounts/dashboard are the next phase.
 
 **Picking up on a new machine:**
 
 ```bash
-cd server && npm install && cp .env.example .env   # fill in SOCRATA_APP_TOKEN once registered
-npm start                                            # http://localhost:3000
+nvm install && nvm use                               # repo pins Node 20.20.2 via .nvmrc
+docker compose up -d                                 # starts Postgres (see CONTEXT.md)
+
+cd server
+npm install
+cp .env.example .env                                 # fill in SOCRATA_APP_TOKEN + JWT_SECRET
+npm run migrate                                       # creates users/cars/violations/etc.
+npm start                                             # http://localhost:3001 — dashboard at /dashboard.html
 
 cd ../mobile && npm install
 npx expo start --lan                                 # then open in Expo Go on your phone
 ```
 
 `mobile/src/api.ts` has `API_BASE_URL` hardcoded to a LAN IP for phone testing — update it to
-match whatever machine is running `server/`.
-
-Postgres: not yet installed/configured locally as of this commit — see [CONTEXT.md](CONTEXT.md)
-for the full plan (custom email/password + Google OAuth, no third-party auth provider).
+match whatever machine is running `server/`. (Mobile doesn't have the accounts/dashboard
+screens yet — only the original anonymous lookup.)

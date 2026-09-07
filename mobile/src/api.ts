@@ -5,7 +5,7 @@
 //
 // Android emulator only: 10.0.2.2 is a special alias that maps to the host machine's
 // localhost, so that also works there without needing the LAN IP.
-export const API_BASE_URL = 'http://192.168.0.83:3000';
+export const API_BASE_URL = 'http://192.168.0.28:3001';
 
 export interface Violation {
   plate: string;
