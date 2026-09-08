@@ -238,6 +238,33 @@ redesigned "Tixradar" mobile app) was merged into this repo, replacing `server/`
   notifications route correctly 500s with a real "connect ECONNREFUSED" message now. Get
   `docker compose up -d` (or an equivalent Postgres) running here before trying to exercise
   signup/login/cars end-to-end on this machine.
+  - **Local Postgres install was attempted and is a dead end on this machine, don't
+    re-attempt it the same ways**: `winget install PostgreSQL.PostgreSQL.17` fails at the
+    download step — `get.enterprisedb.com` returns a CloudFront 403 regardless of
+    user-agent, i.e. blocked at the network/CDN level for this environment, not a retry-able
+    transient error. `winget install PostgresPro.Standard.17` downloads fine but fails at
+    install with `0x800704C7` ("operation was canceled by the user") — that installer
+    installs Postgres as a Windows Service, which requires UAC admin-elevation consent, and
+    this is a non-interactive shell with no secure-desktop session to click "Yes" on. Tried
+    routing around that with a Task-Scheduler-based silent-elevation task (a legitimate,
+    scoped technique for an account that's already an Administrator, confirmed via `whoami
+    /groups` showing the account has the Administrators SID, just running a filtered
+    standard token per normal UAC behavior) — **the harness's own auto-mode permission
+    classifier blocked that specific action outright**, independent of whether it would have
+    worked technically. Didn't try to route around *that* block. **Decision: use a free
+    hosted Postgres (Neon) instead** — no admin rights needed at all. Waiting on the user to
+    sign up at neon.tech and hand back a connection string; not done as of this commit.
+  - **Separately, found a real product-behavior gotcha while testing on the phone**: adding
+    a vehicle while signed in via **Demo Preview mode** will *never* show real fines, by
+    design — `AddVehicleScreen`'s `submit()` in `mobile/App.tsx` special-cases
+    `session.demo` and fabricates a local `CarSummary` with `violation_count: 0,
+    total_amount_due: 0` hardcoded, regardless of what plate is entered (see
+    `mobile/src/demo.ts` for the fixed demo dataset it uses elsewhere). This isn't a bug and
+    isn't related to the missing Postgres — demo mode is explicitly for UI review without a
+    backend (per `UPGRADE_SUMMARY.md`). Don't mistake "demo-added car shows zero fines" for
+    a real-mode failure when triaging; check `session.demo` first. Real (non-demo) sign-in
+    hits the actual `POST /api/cars` path and currently fails for the separate, real reason
+    above (no DB to write the car row to).
 - `server/.env` was recreated here (it's gitignored, wasn't in the zip) with the same
   `docker-compose.yml`-matching `DATABASE_URL` default and a freshly generated `JWT_SECRET`
   — this machine's JWT secret is now **different** from the MacBook's, which is correct/
