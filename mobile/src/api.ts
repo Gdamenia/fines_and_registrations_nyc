@@ -1,30 +1,42 @@
-// Points at the existing Node/Express backend (../plate-lookup). That server has to be
-// running and reachable from your phone — on the same Wi-Fi, your computer's LAN IP works
-// (found via `ipconfig` on Windows / `ifconfig` on Mac-Linux). localhost here would mean
-// "the phone itself", which has no server on it, so it must be a real network address.
-//
-// Android emulator only: 10.0.2.2 is a special alias that maps to the host machine's
-// localhost, so that also works there without needing the LAN IP.
-export const API_BASE_URL = 'http://192.168.0.83:3000';
+// Tixradar API client.
+// For local development set EXPO_PUBLIC_API_BASE_URL to your Mac/PC LAN URL, for example:
+// EXPO_PUBLIC_API_BASE_URL=http://192.168.1.20:3001 npx expo start
+// For App Store/TestFlight builds point this at the production HTTPS API.
+export const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_BASE_URL?.replace(/\/$/, '') || 'http://192.168.0.28:3001';
+
+export interface User {
+  id: number;
+  email: string;
+  full_name?: string | null;
+}
+
+export interface Session {
+  user: User;
+  token: string;
+  demo?: boolean;
+}
 
 export interface Violation {
   plate: string;
   state: string;
-  license_type: string;
+  license_type?: string;
   summons_number: string;
   issue_date: string;
   violation_time?: string;
   violation: string;
-  fine_amount: string;
-  penalty_amount: string;
-  interest_amount: string;
-  reduction_amount: string;
-  payment_amount: string;
+  fine_amount?: string;
+  penalty_amount?: string;
+  interest_amount?: string;
+  reduction_amount?: string;
+  payment_amount?: string;
   amount_due: string;
   violation_status?: string;
   precinct?: string;
   county?: string;
   issuing_agency?: string;
+  street_name?: string;
+  house_number?: string;
 }
 
 export interface ViolationsResponse {
@@ -35,16 +47,16 @@ export interface ViolationsResponse {
 }
 
 export interface Registration {
-  record_type: string;
+  record_type?: string;
   vin: string;
-  registration_class: string;
-  city: string;
-  state: string;
-  zip: string;
-  county: string;
-  model_year: string;
-  make: string;
-  body_type: string;
+  registration_class?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  county?: string;
+  model_year?: string;
+  make?: string;
+  body_type?: string;
   fuel_type?: string;
   color?: string;
   reg_valid_date?: string;
@@ -60,13 +72,92 @@ export interface RegistrationResponse {
   registrations: Registration[];
 }
 
-async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`);
-  const data = await res.json();
+export interface CarSummary {
+  id: number;
+  user_id?: number;
+  nickname: string;
+  plate: string;
+  state: string;
+  vin?: string | null;
+  created_at?: string;
+  violation_count: number | string;
+  total_amount_due: number | string;
+  has_registration: boolean;
+}
+
+export interface StoredViolation {
+  id: number;
+  car_id: number;
+  summons_number: string;
+  amount_due: number | string | null;
+  issue_date?: string | null;
+  violation?: string | null;
+  data: Violation;
+  first_seen_at?: string;
+}
+
+export interface StoredRegistration {
+  id?: number;
+  car_id?: number;
+  data: Registration;
+  fetched_at?: string;
+}
+
+export interface CarDetailResponse {
+  car: CarSummary;
+  violations: StoredViolation[];
+  registration: StoredRegistration | null;
+}
+
+export interface NotificationEvent {
+  id: number;
+  created_at: string;
+  sent_at?: string | null;
+  car_id: number;
+  nickname: string;
+  plate: string;
+  state: string;
+  violation_id: number;
+  summons_number: string;
+  violation?: string | null;
+  amount_due?: number | string | null;
+  issue_date?: string | null;
+}
+
+async function apiFetch<T>(
+  path: string,
+  options: RequestInit = {},
+  token?: string,
+): Promise<T> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(options.headers as Record<string, string> | undefined),
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  if (res.status === 204) return undefined as T;
+
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(data.error || `Request failed (${res.status})`);
   }
   return data as T;
+}
+
+export function signup(fullName: string, email: string, password: string): Promise<Session> {
+  return apiFetch('/api/auth/signup', {
+    method: 'POST',
+    body: JSON.stringify({ fullName, email, password }),
+  });
+}
+
+export function login(email: string, password: string): Promise<Session> {
+  return apiFetch('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
 }
 
 export function fetchViolations(plate: string, state: string): Promise<ViolationsResponse> {
@@ -77,4 +168,35 @@ export function fetchViolations(plate: string, state: string): Promise<Violation
 export function fetchRegistration(vin: string): Promise<RegistrationResponse> {
   const params = new URLSearchParams({ vin });
   return apiFetch(`/api/registration?${params.toString()}`);
+}
+
+export function fetchCars(token: string): Promise<{ cars: CarSummary[] }> {
+  return apiFetch('/api/cars', {}, token);
+}
+
+export function fetchCarDetail(id: number, token: string): Promise<CarDetailResponse> {
+  return apiFetch(`/api/cars/${id}`, {}, token);
+}
+
+export function createCar(
+  token: string,
+  input: { nickname: string; plate: string; state: string; vin?: string },
+): Promise<{ car: CarSummary; violationsFetchError?: string | null; registrationFetchError?: string | null }> {
+  return apiFetch('/api/cars', { method: 'POST', body: JSON.stringify(input) }, token);
+}
+
+export function updateCar(
+  id: number,
+  token: string,
+  input: { nickname: string; plate: string; state: string; vin?: string },
+): Promise<{ car: CarSummary; violationsFetchError?: string | null; registrationFetchError?: string | null }> {
+  return apiFetch(`/api/cars/${id}`, { method: 'PATCH', body: JSON.stringify(input) }, token);
+}
+
+export function deleteCar(id: number, token: string): Promise<void> {
+  return apiFetch(`/api/cars/${id}`, { method: 'DELETE' }, token);
+}
+
+export function fetchNotifications(token: string): Promise<{ notifications: NotificationEvent[] }> {
+  return apiFetch('/api/notifications', {}, token);
 }

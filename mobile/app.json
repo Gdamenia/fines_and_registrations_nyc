@@ -1,25 +1,29 @@
 {
   "expo": {
-    "name": "plate-lookup-mobile",
-    "slug": "plate-lookup-mobile",
-    "version": "1.0.0",
+    "name": "Tixradar",
+    "slug": "tixradar",
+    "version": "1.2.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/tixradar-icon.png",
     "userInterfaceStyle": "light",
+    "scheme": "tixradar",
+    "splash": {
+      "image": "./assets/tixradar-splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#101611"
+    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#101611",
+        "foregroundImage": "./assets/tixradar-foreground.png"
       },
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/tixradar-favicon.png"
     }
   }
 }

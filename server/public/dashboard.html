@@ -1,0 +1,942 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dashboard — Plate & VIN Lookup</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --text: #1a1d21;
+    --muted: #6b7280;
+    --border: #e2e4e8;
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --danger: #b91c1c;
+    --ok: #15803d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --card: #1f2227;
+      --text: #e8e9eb;
+      --muted: #9aa0aa;
+      --border: #30343b;
+      --accent: #3b82f6;
+      --accent-text: #0b0d10;
+      --danger: #f87171;
+      --ok: #4ade80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 2.5rem 1rem;
+  }
+  main { width: 100%; max-width: 640px; }
+  .top-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 0.25rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+  p.sub { color: var(--muted); margin-top: 0; margin-bottom: 1.5rem; font-size: 0.9rem; }
+  a { color: var(--accent); }
+  .lang-select {
+    width: auto;
+    min-width: 130px;
+    padding: 0.4rem 0.6rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font-size: 0.85rem;
+    flex-shrink: 0;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+  .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+  .tab-btn {
+    flex: 1;
+    padding: 0.6rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  .tab-btn.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  form { display: flex; flex-direction: column; gap: 0.75rem; }
+  .row { display: flex; gap: 0.75rem; }
+  label { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem; display: block; }
+  input, select {
+    width: 100%;
+    padding: 0.6rem 0.7rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.95rem;
+  }
+  button.submit {
+    margin-top: 0.25rem;
+    padding: 0.7rem;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 0.95rem;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  button.submit:disabled { opacity: 0.6; cursor: default; }
+  button.secondary {
+    padding: 0.5rem 0.8rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  button.link-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0;
+  }
+  .hidden { display: none !important; }
+  .result-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+  }
+  .result-card h3 { margin: 0 0 0.5rem; font-size: 1rem; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+  .kv { display: grid; grid-template-columns: 140px 1fr; gap: 0.3rem 0.75rem; font-size: 0.88rem; }
+  .kv div.k { color: var(--muted); }
+  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+  .badge.ok { background: rgba(21,128,61,0.15); color: var(--ok); }
+  .badge.danger { background: rgba(185,28,28,0.15); color: var(--danger); }
+  .empty { color: var(--muted); font-size: 0.9rem; padding: 0.5rem 0; }
+  .error { color: var(--danger); font-size: 0.9rem; padding: 0.5rem 0; }
+  .loading { color: var(--muted); font-size: 0.9rem; }
+  .note { font-size: 0.78rem; color: var(--muted); margin-top: 0.75rem; line-height: 1.4; }
+  .car-header { display: flex; justify-content: space-between; align-items: center; }
+  .car-header h3 { margin: 0; }
+  .car-meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
+  #toast {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%) translateY(0);
+    background: var(--text);
+    color: var(--bg);
+    padding: 0.7rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    max-width: 90vw;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 100;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+
+  <!-- ===== Auth view ===== -->
+  <section id="auth-view">
+    <div class="top-row">
+      <div>
+        <h1 data-i18n="appTitle">🚗 Plate & VIN Lookup</h1>
+        <p class="sub" data-i18n="authSubtitle">Sign in to save cars and get notified about new fines.</p>
+      </div>
+      <select class="lang-select" aria-label="Language">
+        <option value="en">🇺🇸 English</option>
+        <option value="ru">🇷🇺 Русский</option>
+        <option value="ka">🇬🇪 ქართული</option>
+        <option value="es">🇪🇸 Español</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <div class="tabs">
+        <button class="tab-btn active" data-authtab="login" type="button" data-i18n="tabLogin">Log in</button>
+        <button class="tab-btn" data-authtab="signup" type="button" data-i18n="tabSignup">Sign up</button>
+      </div>
+
+      <form id="login-form">
+        <div>
+          <label for="login-email" data-i18n="emailLabel">Email</label>
+          <input id="login-email" type="email" required autocomplete="email" />
+        </div>
+        <div>
+          <label for="login-password" data-i18n="passwordLabel">Password</label>
+          <input id="login-password" type="password" required autocomplete="current-password" />
+        </div>
+        <button class="submit" type="submit" data-i18n="loginBtn">Log in</button>
+      </form>
+
+      <form id="signup-form" class="hidden">
+        <div>
+          <label for="signup-email" data-i18n="emailLabel">Email</label>
+          <input id="signup-email" type="email" required autocomplete="email" />
+        </div>
+        <div>
+          <label for="signup-password" data-i18n="passwordLabel">Password</label>
+          <input id="signup-password" type="password" required minlength="8" autocomplete="new-password" />
+        </div>
+        <div class="note" style="margin-top:-0.4rem;" data-i18n="passwordHint">At least 8 characters.</div>
+        <button class="submit" type="submit" data-i18n="signupBtn">Sign up</button>
+      </form>
+
+      <div id="auth-error" class="error hidden"></div>
+    </div>
+
+    <p class="note"><a href="/" data-i18n="backToAnonLink">← Back to anonymous lookup</a> <span data-i18n="backToAnonNote">(no account needed, one car at a time).</span></p>
+  </section>
+
+  <!-- ===== Dashboard view ===== -->
+  <section id="dashboard-view" class="hidden">
+    <div class="top-row">
+      <div>
+        <h1 data-i18n="myCarsTitle">🚗 My Cars</h1>
+        <p class="sub" id="welcome-text"></p>
+      </div>
+      <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.5rem;">
+        <select class="lang-select" aria-label="Language">
+          <option value="en">🇺🇸 English</option>
+          <option value="ru">🇷🇺 Русский</option>
+          <option value="ka">🇬🇪 ქართული</option>
+          <option value="es">🇪🇸 Español</option>
+        </select>
+        <button class="secondary" id="logout-btn" type="button" data-i18n="logoutBtn">Log out</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;" data-i18n="addCarHeading">Add a car</h3>
+      <form id="add-car-form">
+        <div>
+          <label for="car-nickname" data-i18n="nicknameLabel">Nickname</label>
+          <input id="car-nickname" data-i18n-placeholder="nicknamePlaceholder" placeholder="e.g. My Honda" required maxlength="60" />
+        </div>
+        <div class="row">
+          <div style="flex:2;">
+            <label for="car-plate" data-i18n="plateLabel">Plate number</label>
+            <input id="car-plate" placeholder="e.g. LXH1203" required maxlength="10" autocomplete="off" />
+          </div>
+          <div style="flex:1;">
+            <label for="car-state" data-i18n="stateLabel">State</label>
+            <select id="car-state">
+              <option value="NY" selected>NY</option>
+              <option value="NJ">NJ</option>
+              <option value="CT">CT</option>
+              <option value="PA">PA</option>
+              <option value="FL">FL</option>
+              <option value="CA">CA</option>
+              <option value="TX">TX</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label for="car-vin"><span data-i18n="vinLabel">VIN</span> <span style="font-weight:400;" data-i18n="vinLabelHint">(optional — needed for registration info)</span></label>
+          <input id="car-vin" placeholder="e.g. JTDZN3EU6D3199758" maxlength="17" autocomplete="off" />
+        </div>
+        <button class="submit" type="submit" id="add-car-submit" data-i18n="addCarBtn">Add car</button>
+      </form>
+      <div id="add-car-error" class="error hidden"></div>
+    </div>
+
+    <div id="cars-list"></div>
+  </section>
+
+</main>
+<div id="toast"></div>
+
+<script>
+  const TOKEN_KEY = 'plateLookupToken';
+  const EMAIL_KEY = 'plateLookupEmail';
+
+  // ---------- i18n ----------
+  // Mirror of the pattern in index.html. Translation strings are duplicated across
+  // index.html, dashboard.html and mobile/src/i18n.ts — keep them in sync manually
+  // when adding UI text (see CONTEXT.md).
+  const I18N = {
+    en: {
+      pageTitle: 'Dashboard — Plate & VIN Lookup',
+      appTitle: '🚗 Plate & VIN Lookup',
+      authSubtitle: 'Sign in to save cars and get notified about new fines.',
+      tabLogin: 'Log in',
+      tabSignup: 'Sign up',
+      emailLabel: 'Email',
+      passwordLabel: 'Password',
+      loginBtn: 'Log in',
+      signupBtn: 'Sign up',
+      passwordHint: 'At least 8 characters.',
+      backToAnonLink: '← Back to anonymous lookup',
+      backToAnonNote: '(no account needed, one car at a time).',
+      loginFailed: 'Login failed.',
+      signupFailed: 'Sign up failed.',
+      networkError: 'Network error: {msg}',
+      sessionExpired: 'Session expired — please log in again.',
+      myCarsTitle: '🚗 My Cars',
+      logoutBtn: 'Log out',
+      addCarHeading: 'Add a car',
+      nicknameLabel: 'Nickname',
+      nicknamePlaceholder: 'e.g. My Honda',
+      plateLabel: 'Plate number',
+      stateLabel: 'State',
+      vinLabel: 'VIN',
+      vinLabelHint: '(optional — needed for registration info)',
+      addCarBtn: 'Add car',
+      addingFines: 'Adding & fetching fines…',
+      carAdded: '{nickname} added.',
+      carAddedViolationsFailed: 'Car added, but fetching violations failed: {msg}',
+      couldNotAddCar: 'Could not add car.',
+      loadingCars: 'Loading your cars…',
+      noCarsYet: 'No cars yet — add one above.',
+      badgeDue: '${amount} due',
+      badgeZeroDue: '$0 due',
+      violationsOnFile: '{count} violation(s) on file',
+      noRegistrationOnFile: 'no registration on file',
+      viewDetails: 'View details',
+      hideDetails: 'Hide details',
+      removeBtn: 'Remove',
+      confirmRemove: 'Remove "{name}" and all its stored fines/registration data? This can\'t be undone.',
+      carRemoved: '{name} removed.',
+      couldNotRemoveCar: 'Could not remove car.',
+      loadingShort: 'Loading…',
+      noViolationsForCar: 'No violations on file for this car.',
+      outstandingCount: '{count} outstanding',
+      totalDue: 'total due: ${amount}',
+      paidCount: '{count} paid/resolved',
+      noOutstanding: '✅ No outstanding balance — all violations on file are paid/resolved.',
+      showPaid: 'Show {count} paid/resolved violation(s)',
+      hidePaid: 'Hide paid/resolved violation(s)',
+      registrationHeading: 'Registration',
+      kMake: 'Make',
+      kModelYear: 'Model year',
+      kBodyType: 'Body type',
+      kLocation: 'Location',
+      kExpires: 'Expires',
+      noRegistrationDetail: 'No registration on file (add a VIN, or the DMV dataset has nothing for this VIN yet).',
+      kSummons: 'Summons #',
+      kIssueDate: 'Issue date',
+      kAmountDue: 'Amount due',
+      badgePaid: 'PAID',
+      genericViolation: 'Violation',
+    },
+    ru: {
+      pageTitle: 'Панель — Проверка номера и VIN',
+      appTitle: '🚗 Проверка номера и VIN',
+      authSubtitle: 'Войдите, чтобы сохранять машины и получать уведомления о новых штрафах.',
+      tabLogin: 'Вход',
+      tabSignup: 'Регистрация',
+      emailLabel: 'Эл. почта',
+      passwordLabel: 'Пароль',
+      loginBtn: 'Войти',
+      signupBtn: 'Зарегистрироваться',
+      passwordHint: 'Не менее 8 символов.',
+      backToAnonLink: '← Назад к анонимному поиску',
+      backToAnonNote: '(без аккаунта, по одной машине за раз).',
+      loginFailed: 'Не удалось войти.',
+      signupFailed: 'Не удалось зарегистрироваться.',
+      networkError: 'Ошибка сети: {msg}',
+      sessionExpired: 'Сессия истекла — войдите снова.',
+      myCarsTitle: '🚗 Мои машины',
+      logoutBtn: 'Выйти',
+      addCarHeading: 'Добавить машину',
+      nicknameLabel: 'Название',
+      nicknamePlaceholder: 'напр. Моя Honda',
+      plateLabel: 'Номерной знак',
+      stateLabel: 'Штат',
+      vinLabel: 'VIN',
+      vinLabelHint: '(необязательно — нужно для данных о регистрации)',
+      addCarBtn: 'Добавить машину',
+      addingFines: 'Добавление и загрузка штрафов…',
+      carAdded: '{nickname} добавлена.',
+      carAddedViolationsFailed: 'Машина добавлена, но не удалось загрузить штрафы: {msg}',
+      couldNotAddCar: 'Не удалось добавить машину.',
+      loadingCars: 'Загрузка ваших машин…',
+      noCarsYet: 'Пока нет машин — добавьте одну выше.',
+      badgeDue: 'к оплате ${amount}',
+      badgeZeroDue: 'к оплате $0',
+      violationsOnFile: 'штрафов в базе: {count}',
+      noRegistrationOnFile: 'нет данных о регистрации',
+      viewDetails: 'Подробнее',
+      hideDetails: 'Скрыть',
+      removeBtn: 'Удалить',
+      confirmRemove: 'Удалить «{name}» и все сохранённые данные о штрафах/регистрации? Это нельзя отменить.',
+      carRemoved: '{name} удалена.',
+      couldNotRemoveCar: 'Не удалось удалить машину.',
+      loadingShort: 'Загрузка…',
+      noViolationsForCar: 'Для этой машины штрафов в базе нет.',
+      outstandingCount: 'неоплаченных: {count}',
+      totalDue: 'к оплате: ${amount}',
+      paidCount: 'оплачено/закрыто: {count}',
+      noOutstanding: '✅ Задолженности нет — все штрафы оплачены или закрыты.',
+      showPaid: 'Показать оплаченные/закрытые штрафы ({count})',
+      hidePaid: 'Скрыть оплаченные/закрытые штрафы',
+      registrationHeading: 'Регистрация',
+      kMake: 'Марка',
+      kModelYear: 'Год выпуска',
+      kBodyType: 'Тип кузова',
+      kLocation: 'Местоположение',
+      kExpires: 'Истекает',
+      noRegistrationDetail: 'Нет данных о регистрации (добавьте VIN, или в базе DMV пока нет данных по этому VIN).',
+      kSummons: '№ повестки',
+      kIssueDate: 'Дата выписки',
+      kAmountDue: 'К оплате',
+      badgePaid: 'ОПЛАЧЕНО',
+      genericViolation: 'Нарушение',
+    },
+    ka: {
+      pageTitle: 'პანელი — ნომრისა და VIN-ის შემოწმება',
+      appTitle: '🚗 ნომრისა და VIN-ის შემოწმება',
+      authSubtitle: 'შედით, რომ შეინახოთ მანქანები და მიიღოთ შეტყობინებები ახალი ჯარიმების შესახებ.',
+      tabLogin: 'შესვლა',
+      tabSignup: 'რეგისტრაცია',
+      emailLabel: 'ელ. ფოსტა',
+      passwordLabel: 'პაროლი',
+      loginBtn: 'შესვლა',
+      signupBtn: 'რეგისტრაცია',
+      passwordHint: 'მინიმუმ 8 სიმბოლო.',
+      backToAnonLink: '← დაბრუნება ანონიმურ ძებნაზე',
+      backToAnonNote: '(ანგარიში საჭირო არ არის, თითო მანქანა ერთ ჯერზე).',
+      loginFailed: 'შესვლა ვერ მოხერხდა.',
+      signupFailed: 'რეგისტრაცია ვერ მოხერხდა.',
+      networkError: 'ქსელის შეცდომა: {msg}',
+      sessionExpired: 'სესიის ვადა ამოიწურა — გთხოვთ, ხელახლა შეხვიდეთ.',
+      myCarsTitle: '🚗 ჩემი მანქანები',
+      logoutBtn: 'გამოსვლა',
+      addCarHeading: 'მანქანის დამატება',
+      nicknameLabel: 'სახელი',
+      nicknamePlaceholder: 'მაგ. ჩემი Honda',
+      plateLabel: 'სანომრე ნიშანი',
+      stateLabel: 'შტატი',
+      vinLabel: 'VIN',
+      vinLabelHint: '(არასავალდებულო — საჭიროა რეგისტრაციის ინფორმაციისთვის)',
+      addCarBtn: 'მანქანის დამატება',
+      addingFines: 'დამატება და ჯარიმების მოძიება…',
+      carAdded: '{nickname} დაემატა.',
+      carAddedViolationsFailed: 'მანქანა დაემატა, მაგრამ ჯარიმების მოძიება ვერ მოხერხდა: {msg}',
+      couldNotAddCar: 'მანქანის დამატება ვერ მოხერხდა.',
+      loadingCars: 'თქვენი მანქანების ჩატვირთვა…',
+      noCarsYet: 'ჯერ არ არის მანქანები — დაამატეთ ერთი ზემოთ.',
+      badgeDue: 'გადასახდელი $${amount}',
+      badgeZeroDue: 'გადასახდელი $0',
+      violationsOnFile: 'ბაზაში {count} დარღვევა',
+      noRegistrationOnFile: 'რეგისტრაციის მონაცემები არ არის',
+      viewDetails: 'დეტალები',
+      hideDetails: 'დამალვა',
+      removeBtn: 'წაშლა',
+      confirmRemove: 'წავშალო „{name}" და მისი ყველა შენახული ჯარიმა/რეგისტრაციის მონაცემი? ამის გაუქმება შეუძლებელია.',
+      carRemoved: '{name} წაიშალა.',
+      couldNotRemoveCar: 'მანქანის წაშლა ვერ მოხერხდა.',
+      loadingShort: 'იტვირთება…',
+      noViolationsForCar: 'ამ მანქანისთვის ბაზაში დარღვევები არ არის.',
+      outstandingCount: 'გადაუხდელი: {count}',
+      totalDue: 'გადასახდელი: ${amount}',
+      paidCount: 'გადახდილი/დახურული: {count}',
+      noOutstanding: '✅ გადასახდელი თანხა არ არის — ყველა დარღვევა გადახდილია ან დახურულია.',
+      showPaid: 'გადახდილი/დახურული დარღვევების ჩვენება ({count})',
+      hidePaid: 'გადახდილი/დახურული დარღვევების დამალვა',
+      registrationHeading: 'რეგისტრაცია',
+      kMake: 'მარკა',
+      kModelYear: 'გამოშვების წელი',
+      kBodyType: 'ძარის ტიპი',
+      kLocation: 'მდებარეობა',
+      kExpires: 'იწურება',
+      noRegistrationDetail: 'რეგისტრაციის მონაცემები არ არის (დაამატეთ VIN, ან DMV-ის ბაზაში ჯერ არაფერია ამ VIN-ისთვის).',
+      kSummons: 'ქვითრის №',
+      kIssueDate: 'გამოწერის თარიღი',
+      kAmountDue: 'გადასახდელი',
+      badgePaid: 'გადახდილია',
+      genericViolation: 'დარღვევა',
+    },
+    es: {
+      pageTitle: 'Panel — Consulta de matrícula y VIN',
+      appTitle: '🚗 Consulta de matrícula y VIN',
+      authSubtitle: 'Inicia sesión para guardar coches y recibir avisos de nuevas multas.',
+      tabLogin: 'Iniciar sesión',
+      tabSignup: 'Registrarse',
+      emailLabel: 'Correo electrónico',
+      passwordLabel: 'Contraseña',
+      loginBtn: 'Iniciar sesión',
+      signupBtn: 'Registrarse',
+      passwordHint: 'Al menos 8 caracteres.',
+      backToAnonLink: '← Volver a la consulta anónima',
+      backToAnonNote: '(sin cuenta, un coche a la vez).',
+      loginFailed: 'Error al iniciar sesión.',
+      signupFailed: 'Error al registrarse.',
+      networkError: 'Error de red: {msg}',
+      sessionExpired: 'La sesión expiró — inicia sesión de nuevo.',
+      myCarsTitle: '🚗 Mis coches',
+      logoutBtn: 'Cerrar sesión',
+      addCarHeading: 'Añadir un coche',
+      nicknameLabel: 'Apodo',
+      nicknamePlaceholder: 'p. ej. Mi Honda',
+      plateLabel: 'Número de matrícula',
+      stateLabel: 'Estado',
+      vinLabel: 'VIN',
+      vinLabelHint: '(opcional — necesario para la información de registro)',
+      addCarBtn: 'Añadir coche',
+      addingFines: 'Añadiendo y consultando multas…',
+      carAdded: '{nickname} añadido.',
+      carAddedViolationsFailed: 'Coche añadido, pero falló la consulta de multas: {msg}',
+      couldNotAddCar: 'No se pudo añadir el coche.',
+      loadingCars: 'Cargando tus coches…',
+      noCarsYet: 'Aún no hay coches — añade uno arriba.',
+      badgeDue: '${amount} pendiente',
+      badgeZeroDue: '$0 pendiente',
+      violationsOnFile: '{count} multa(s) registrada(s)',
+      noRegistrationOnFile: 'sin registro en archivo',
+      viewDetails: 'Ver detalles',
+      hideDetails: 'Ocultar detalles',
+      removeBtn: 'Eliminar',
+      confirmRemove: '¿Eliminar "{name}" y todos sus datos de multas/registro guardados? No se puede deshacer.',
+      carRemoved: '{name} eliminado.',
+      couldNotRemoveCar: 'No se pudo eliminar el coche.',
+      loadingShort: 'Cargando…',
+      noViolationsForCar: 'No hay multas registradas para este coche.',
+      outstandingCount: '{count} pendiente(s)',
+      totalDue: 'total pendiente: ${amount}',
+      paidCount: '{count} pagada(s)/resuelta(s)',
+      noOutstanding: '✅ Sin saldo pendiente — todas las multas registradas están pagadas o resueltas.',
+      showPaid: 'Mostrar {count} multa(s) pagada(s)/resuelta(s)',
+      hidePaid: 'Ocultar multas pagadas/resueltas',
+      registrationHeading: 'Registro',
+      kMake: 'Marca',
+      kModelYear: 'Año del modelo',
+      kBodyType: 'Tipo de carrocería',
+      kLocation: 'Ubicación',
+      kExpires: 'Vence',
+      noRegistrationDetail: 'No hay registro en archivo (añade un VIN, o el conjunto del DMV aún no tiene nada para este VIN).',
+      kSummons: 'N.º de citación',
+      kIssueDate: 'Fecha de emisión',
+      kAmountDue: 'Monto adeudado',
+      badgePaid: 'PAGADO',
+      genericViolation: 'Infracción',
+    },
+  };
+
+  // Raw NYC DOF violation descriptions (e.g. "NO PARKING-STREET CLEANING") — same lookup
+  // table as index.html. Keyed by the exact uppercase string the API returns; anything
+  // not listed falls back to the original English text.
+  const VIOLATION_NAMES = {
+    'NO PARKING-STREET CLEANING': { ru: 'Стоянка запрещена — уборка улицы', ka: 'პარკინგი აკრძალულია — ქუჩის დასუფთავება', es: 'Prohibido estacionar — limpieza de calles' },
+    'NO PARKING-DAY/TIME LIMITS': { ru: 'Стоянка запрещена — ограничение по дням/времени', ka: 'პარკინგი აკრძალულია — დღის/დროის შეზღუდვა', es: 'Prohibido estacionar — límite de día/hora' },
+    'NO STANDING-DAY/TIME LIMITS': { ru: 'Остановка запрещена — ограничение по дням/времени', ka: 'გაჩერება აკრძალულია — დღის/დროის შეზღუდვა', es: 'Prohibido detenerse — límite de día/hora' },
+    'NO STANDING-BUS STOP': { ru: 'Остановка запрещена — автобусная остановка', ka: 'გაჩერება აკრძალულია — ავტობუსის გაჩერება', es: 'Prohibido detenerse — parada de autobús' },
+    'NO STANDING-EXC. TRUCK LOADING': { ru: 'Остановка запрещена, кроме погрузки грузовиков', ka: 'გაჩერება აკრძალულია, გარდა სატვირთოს დატვირთვისა', es: 'Prohibido detenerse, excepto carga de camiones' },
+    'OBSTRUCTING DRIVEWAY': { ru: 'Блокирование въезда', ka: 'შესასვლელის გადაკეტვა', es: 'Obstrucción de entrada de vehículos' },
+    'EXPIRED MUNI METER': { ru: 'Истёк срок оплаты паркомата', ka: 'ვადაგასული საპარკინგო მრიცხველი', es: 'Parquímetro municipal vencido' },
+    'FAIL TO DSPLY MUNI METER RECPT': { ru: 'Не выставлен чек паркомата', ka: 'საპარკინგო მრიცხველის ქვითარი არ არის გამოტანილი', es: 'No exhibió el recibo del parquímetro' },
+    'FAILURE TO STOP AT RED LIGHT': { ru: 'Проезд на красный свет', ka: 'წითელ შუქზე გავლა', es: 'No detenerse en luz roja' },
+    'PHTO SCHOOL ZN SPEED VIOLATION': { ru: 'Превышение скорости у школы (камера)', ka: 'სიჩქარის გადაჭარბება სკოლის ზონაში (კამერა)', es: 'Exceso de velocidad en zona escolar (cámara)' },
+    'VIN OBSCURED': { ru: 'VIN-номер скрыт/не читается', ka: 'VIN-კოდი დაფარულია/არ იკითხება', es: 'VIN oculto/ilegible' },
+  };
+
+  let currentLang = localStorage.getItem('lang') || 'en';
+
+  function t(key, vars) {
+    let str = (I18N[currentLang] && I18N[currentLang][key]) ?? I18N.en[key] ?? key;
+    if (vars) {
+      Object.keys(vars).forEach((k) => { str = str.split(`{${k}}`).join(vars[k]); });
+    }
+    return str;
+  }
+
+  function translateViolation(name) {
+    if (!name) return t('genericViolation');
+    const entry = VIOLATION_NAMES[String(name).trim().toUpperCase()];
+    if (entry && entry[currentLang]) return entry[currentLang];
+    return name;
+  }
+
+  function applyStaticTranslations() {
+    document.documentElement.lang = currentLang;
+    document.title = t('pageTitle');
+    document.querySelectorAll('[data-i18n]').forEach((el) => {
+      el.textContent = t(el.getAttribute('data-i18n'));
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+      el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+    });
+  }
+
+  document.querySelectorAll('.lang-select').forEach((sel) => {
+    sel.value = currentLang;
+    sel.addEventListener('change', () => {
+      currentLang = sel.value;
+      localStorage.setItem('lang', currentLang);
+      document.querySelectorAll('.lang-select').forEach((s) => { s.value = currentLang; });
+      applyStaticTranslations();
+      if (!dashboardView.classList.contains('hidden')) loadCars();
+    });
+  });
+
+  // ---------- App ----------
+
+  const authView = document.getElementById('auth-view');
+  const dashboardView = document.getElementById('dashboard-view');
+  const toastEl = document.getElementById('toast');
+
+  function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => toastEl.classList.remove('show'), 4000);
+  }
+
+  function escapeHtml(str) {
+    return String(str ?? '').replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+
+  function getToken() {
+    return localStorage.getItem(TOKEN_KEY);
+  }
+
+  function setSession(token, email) {
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(EMAIL_KEY, email);
+  }
+
+  function clearSession() {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(EMAIL_KEY);
+  }
+
+  // Small wrapper so every authenticated call handles an expired/invalid token the same way.
+  async function api(path, options = {}) {
+    const res = await fetch(path, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+        Authorization: `Bearer ${getToken()}`,
+      },
+    });
+    if (res.status === 401) {
+      clearSession();
+      showDashboard(false);
+      throw new Error(t('sessionExpired'));
+    }
+    return res;
+  }
+
+  // ---------- Auth view ----------
+
+  const loginTab = document.querySelector('[data-authtab="login"]');
+  const signupTab = document.querySelector('[data-authtab="signup"]');
+  const loginForm = document.getElementById('login-form');
+  const signupForm = document.getElementById('signup-form');
+  const authError = document.getElementById('auth-error');
+
+  loginTab.addEventListener('click', () => switchAuthTab('login'));
+  signupTab.addEventListener('click', () => switchAuthTab('signup'));
+
+  function switchAuthTab(tab) {
+    const isLogin = tab === 'login';
+    loginTab.classList.toggle('active', isLogin);
+    signupTab.classList.toggle('active', !isLogin);
+    loginForm.classList.toggle('hidden', !isLogin);
+    signupForm.classList.toggle('hidden', isLogin);
+    authError.classList.add('hidden');
+  }
+
+  function setAuthError(msg) {
+    authError.textContent = msg;
+    authError.classList.remove('hidden');
+  }
+
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    authError.classList.add('hidden');
+    const email = document.getElementById('login-email').value.trim();
+    const password = document.getElementById('login-password').value;
+
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) return setAuthError(data.error || t('loginFailed'));
+      setSession(data.token, data.user.email);
+      showDashboard(true);
+    } catch (err) {
+      setAuthError(t('networkError', { msg: err.message }));
+    }
+  });
+
+  signupForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    authError.classList.add('hidden');
+    const email = document.getElementById('signup-email').value.trim();
+    const password = document.getElementById('signup-password').value;
+
+    try {
+      const res = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) return setAuthError(data.error || t('signupFailed'));
+      setSession(data.token, data.user.email);
+      showDashboard(true);
+    } catch (err) {
+      setAuthError(t('networkError', { msg: err.message }));
+    }
+  });
+
+  document.getElementById('logout-btn').addEventListener('click', () => {
+    clearSession();
+    showDashboard(false);
+  });
+
+  // ---------- Dashboard view ----------
+
+  function showDashboard(loggedIn) {
+    authView.classList.toggle('hidden', loggedIn);
+    dashboardView.classList.toggle('hidden', !loggedIn);
+    if (loggedIn) {
+      document.getElementById('welcome-text').textContent = localStorage.getItem(EMAIL_KEY) || '';
+      loadCars();
+    }
+  }
+
+  const carsList = document.getElementById('cars-list');
+  const addCarForm = document.getElementById('add-car-form');
+  const addCarError = document.getElementById('add-car-error');
+  const addCarSubmit = document.getElementById('add-car-submit');
+
+  addCarForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    addCarError.classList.add('hidden');
+    addCarSubmit.disabled = true;
+    addCarSubmit.textContent = t('addingFines');
+
+    const nickname = document.getElementById('car-nickname').value.trim();
+    const plate = document.getElementById('car-plate').value.trim();
+    const state = document.getElementById('car-state').value;
+    const vin = document.getElementById('car-vin').value.trim();
+
+    try {
+      const res = await api('/api/cars', {
+        method: 'POST',
+        body: JSON.stringify({ nickname, plate, state, vin: vin || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        addCarError.textContent = data.error || t('couldNotAddCar');
+        addCarError.classList.remove('hidden');
+        return;
+      }
+      addCarForm.reset();
+      document.getElementById('car-state').value = 'NY';
+      if (data.violationsFetchError) {
+        showToast(t('carAddedViolationsFailed', { msg: data.violationsFetchError }));
+      } else {
+        showToast(t('carAdded', { nickname }));
+      }
+      loadCars();
+    } catch (err) {
+      addCarError.textContent = err.message;
+      addCarError.classList.remove('hidden');
+    } finally {
+      addCarSubmit.disabled = false;
+      addCarSubmit.textContent = t('addCarBtn');
+    }
+  });
+
+  async function loadCars() {
+    carsList.innerHTML = `<div class="loading">${escapeHtml(t('loadingCars'))}</div>`;
+    try {
+      const res = await api('/api/cars');
+      const data = await res.json();
+      renderCars(data.cars);
+    } catch (err) {
+      carsList.innerHTML = `<div class="error">⚠️ ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderCars(cars) {
+    if (cars.length === 0) {
+      carsList.innerHTML = `<div class="empty">${escapeHtml(t('noCarsYet'))}</div>`;
+      return;
+    }
+
+    carsList.innerHTML = cars.map((car) => {
+      const dueBadge = Number(car.total_amount_due) > 0
+        ? `<span class="badge danger">${escapeHtml(t('badgeDue', { amount: car.total_amount_due }))}</span>`
+        : `<span class="badge ok">${escapeHtml(t('badgeZeroDue'))}</span>`;
+      return `
+      <div class="result-card" data-car-id="${car.id}">
+        <div class="car-header">
+          <div>
+            <h3 style="display:block;">${escapeHtml(car.nickname)} ${dueBadge}</h3>
+            <div class="car-meta">
+              ${escapeHtml(car.plate)} / ${escapeHtml(car.state)}
+              ${car.vin ? ` · VIN ${escapeHtml(car.vin)}` : ''}
+              · ${escapeHtml(t('violationsOnFile', { count: car.violation_count }))}
+              ${car.has_registration ? '' : ` · ${escapeHtml(t('noRegistrationOnFile'))}`}
+            </div>
+          </div>
+        </div>
+        <div style="display:flex; gap:0.5rem; margin-top:0.75rem;">
+          <button type="button" class="secondary view-car-btn" data-car-id="${car.id}">${escapeHtml(t('viewDetails'))}</button>
+          <button type="button" class="secondary delete-car-btn" data-car-id="${car.id}" data-car-name="${escapeHtml(car.nickname)}">${escapeHtml(t('removeBtn'))}</button>
+        </div>
+        <div class="car-detail hidden" id="car-detail-${car.id}" style="margin-top:0.75rem;"></div>
+      </div>`;
+    }).join('');
+  }
+
+  carsList.addEventListener('click', async (e) => {
+    const togglePaidBtn = e.target.closest('.toggle-paid-btn');
+    if (togglePaidBtn) {
+      const section = togglePaidBtn.nextElementSibling;
+      const nowHidden = section.classList.toggle('hidden');
+      const count = Number(togglePaidBtn.dataset.paidCount);
+      togglePaidBtn.textContent = nowHidden ? t('showPaid', { count }) : t('hidePaid');
+      return;
+    }
+
+    const viewBtn = e.target.closest('.view-car-btn');
+    const deleteBtn = e.target.closest('.delete-car-btn');
+
+    if (viewBtn) {
+      const carId = viewBtn.dataset.carId;
+      const detailEl = document.getElementById(`car-detail-${carId}`);
+      const nowHidden = detailEl.classList.toggle('hidden');
+      viewBtn.textContent = nowHidden ? t('viewDetails') : t('hideDetails');
+      if (!nowHidden && !detailEl.dataset.loaded) {
+        detailEl.innerHTML = `<div class="loading">${escapeHtml(t('loadingShort'))}</div>`;
+        try {
+          const res = await api(`/api/cars/${carId}`);
+          const data = await res.json();
+          detailEl.innerHTML = renderCarDetail(data);
+          detailEl.dataset.loaded = '1';
+        } catch (err) {
+          detailEl.innerHTML = `<div class="error">⚠️ ${escapeHtml(err.message)}</div>`;
+        }
+      }
+    }
+
+    if (deleteBtn) {
+      const carId = deleteBtn.dataset.carId;
+      const carName = deleteBtn.dataset.carName;
+      if (!confirm(t('confirmRemove', { name: carName }))) return;
+
+      try {
+        const res = await api(`/api/cars/${carId}`, { method: 'DELETE' });
+        if (!res.ok && res.status !== 204) {
+          const data = await res.json();
+          throw new Error(data.error || t('couldNotRemoveCar'));
+        }
+        showToast(t('carRemoved', { name: carName }));
+        loadCars();
+      } catch (err) {
+        showToast(err.message);
+      }
+    }
+  });
+
+  function violationCard(v) {
+    const due = parseFloat(v.amount_due) || 0;
+    const badge = due > 0
+      ? `<span class="badge danger">${escapeHtml(t('badgeDue', { amount: v.amount_due }))}</span>`
+      : `<span class="badge ok">${escapeHtml(t('badgePaid'))}</span>`;
+    return `
+      <div class="result-card">
+        <h3>${escapeHtml(translateViolation(v.violation))} ${badge}</h3>
+        <div class="kv">
+          <div class="k">${escapeHtml(t('kSummons'))}</div><div>${escapeHtml(v.summons_number)}</div>
+          <div class="k">${escapeHtml(t('kIssueDate'))}</div><div>${escapeHtml(v.issue_date || '—')}</div>
+          <div class="k">${escapeHtml(t('kAmountDue'))}</div><div><strong>$${escapeHtml(v.amount_due ?? '0')}</strong></div>
+        </div>
+      </div>`;
+  }
+
+  function renderCarDetail(data) {
+    const { violations, registration } = data;
+
+    // Unpaid (amount_due > 0) on top; paid/resolved ones collapsed behind a toggle,
+    // same as the anonymous lookup view (index.html).
+    const outstanding = violations.filter((v) => (parseFloat(v.amount_due) || 0) > 0);
+    const paid = violations.filter((v) => (parseFloat(v.amount_due) || 0) === 0);
+    const totalDue = outstanding.reduce((sum, v) => sum + (parseFloat(v.amount_due) || 0), 0);
+
+    let violationRows;
+    if (!violations.length) {
+      violationRows = `<div class="empty">${escapeHtml(t('noViolationsForCar'))}</div>`;
+    } else {
+      const summary = `
+        <div style="margin:0.25rem 0 0.5rem; font-size:0.85rem; color:var(--muted);">
+          <span style="color:var(--danger); font-weight:600;">${escapeHtml(t('outstandingCount', { count: outstanding.length }))}</span>
+          (${escapeHtml(t('totalDue', { amount: totalDue.toFixed(2) }))}),
+          <span style="color:var(--ok); font-weight:600;">${escapeHtml(t('paidCount', { count: paid.length }))}</span>
+        </div>`;
+      const outstandingCards = outstanding.map(violationCard).join('')
+        || `<div class="empty">${escapeHtml(t('noOutstanding'))}</div>`;
+      const paidBlock = paid.length
+        ? `
+        <button type="button" class="tab-btn toggle-paid-btn" data-paid-count="${paid.length}" style="width:100%; margin-top:0.5rem;">
+          ${escapeHtml(t('showPaid', { count: paid.length }))}
+        </button>
+        <div class="paid-section hidden" style="margin-top:0.75rem;">${paid.map(violationCard).join('')}</div>`
+        : '';
+      violationRows = `${summary}${outstandingCards}${paidBlock}`;
+    }
+
+    const registrationBlock = registration
+      ? `
+        <div class="result-card">
+          <h3>${escapeHtml(t('registrationHeading'))}</h3>
+          <div class="kv">
+            <div class="k">${escapeHtml(t('kMake'))}</div><div>${escapeHtml(registration.data.make || '—')}</div>
+            <div class="k">${escapeHtml(t('kModelYear'))}</div><div>${escapeHtml(registration.data.model_year || '—')}</div>
+            <div class="k">${escapeHtml(t('kBodyType'))}</div><div>${escapeHtml(registration.data.body_type || '—')}</div>
+            <div class="k">${escapeHtml(t('kLocation'))}</div><div>${escapeHtml(registration.data.city || '')}, ${escapeHtml(registration.data.state || '')}</div>
+            <div class="k">${escapeHtml(t('kExpires'))}</div><div>${escapeHtml((registration.data.reg_expiration_date || '').slice(0, 10) || '—')}</div>
+          </div>
+        </div>`
+      : `<div class="empty">${escapeHtml(t('noRegistrationDetail'))}</div>`;
+
+    return `${registrationBlock}${violationRows}`;
+  }
+
+  // ---------- Boot ----------
+
+  applyStaticTranslations();
+
+  if (getToken()) {
+    showDashboard(true);
+  } else {
+    showDashboard(false);
+  }
+</script>
+</body>
+</html>
