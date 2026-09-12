@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { getViolationsByPlate } = require('./socrata');
 const { getRegistrationByVin } = require('./dmvRegistration');
-const { signup, login } = require('./auth');
+const { signup, login, updateProfile } = require('./auth');
 const { requireAuth } = require('./middleware/requireAuth');
 const carsService = require('./carsService');
 const { registerPushToken } = require('./push');
@@ -64,6 +64,16 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+app.patch('/api/profile', requireAuth, async (req, res) => {
+  const { fullName } = req.body;
+  try {
+    const user = await updateProfile(req.userId, fullName);
+    res.json({ user });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 // ---- Cars (all require auth) ----
 
 app.get('/api/cars', requireAuth, async (req, res) => {
@@ -76,13 +86,13 @@ app.get('/api/cars', requireAuth, async (req, res) => {
 });
 
 app.post('/api/cars', requireAuth, async (req, res) => {
-  const { nickname, plate, state, vin } = req.body;
+  const { nickname, plate, state, vin, vehicle_icon } = req.body;
   if (!nickname || !plate) {
     return res.status(400).json({ error: 'A nickname and plate number are both required.' });
   }
 
   try {
-    const result = await carsService.createCar(req.userId, { nickname, plate, state, vin });
+    const result = await carsService.createCar(req.userId, { nickname, plate, state, vin, vehicle_icon });
     res.status(201).json(result);
   } catch (err) {
     sendError(res, err);
@@ -100,13 +110,13 @@ app.get('/api/cars/:id', requireAuth, async (req, res) => {
 });
 
 app.patch('/api/cars/:id', requireAuth, async (req, res) => {
-  const { nickname, plate, state, vin } = req.body;
+  const { nickname, plate, state, vin, vehicle_icon } = req.body;
   if (!nickname || !plate || !state) {
     return res.status(400).json({ error: 'Nickname, plate, and state are required.' });
   }
 
   try {
-    const result = await carsService.updateCar(req.params.id, req.userId, { nickname, plate, state, vin });
+    const result = await carsService.updateCar(req.params.id, req.userId, { nickname, plate, state, vin, vehicle_icon });
     if (!result) return res.status(404).json({ error: 'Car not found.' });
     res.json(result);
   } catch (err) {
@@ -131,11 +141,12 @@ app.get('/api/notifications', requireAuth, async (req, res) => {
     const { rows } = await require('./db/pool').pool.query(
       `SELECT
          ne.id, ne.created_at, ne.sent_at, ne.car_id, ne.violation_id,
+         ne.kind, ne.title, ne.body,
          c.nickname, c.plate, c.state,
          v.summons_number, v.violation, v.amount_due, v.issue_date
        FROM notification_events ne
        JOIN cars c ON c.id = ne.car_id
-       JOIN violations v ON v.id = ne.violation_id
+       LEFT JOIN violations v ON v.id = ne.violation_id
        WHERE c.user_id = $1
        ORDER BY ne.created_at DESC
        LIMIT 100`,

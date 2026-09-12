@@ -13,6 +13,7 @@ export const DEMO_CARS: CarSummary[] = [
     plate: 'KZP-7314',
     state: 'NY',
     vin: '5YJ3E1EA7NF324518',
+    vehicle_icon: 'sedan',
     violation_count: 1,
     total_amount_due: 50,
     has_registration: true,
@@ -23,6 +24,7 @@ export const DEMO_CARS: CarSummary[] = [
     plate: 'LFM-2901',
     state: 'NY',
     vin: '2HKRW2H80MH612345',
+    vehicle_icon: 'suv',
     violation_count: 0,
     total_amount_due: 0,
     has_registration: true,
@@ -33,6 +35,7 @@ export const DEMO_CARS: CarSummary[] = [
     plate: 'HXT-8840',
     state: 'NY',
     vin: 'WBA5R1C08LFH88990',
+    vehicle_icon: 'supercar',
     violation_count: 2,
     total_amount_due: 125,
     has_registration: true,
@@ -100,13 +103,15 @@ export const DEMO_DETAILS: Record<number, CarDetailResponse> = {
 export const DEMO_NOTIFICATIONS: NotificationEvent[] = [
   {
     id: 1, created_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(), car_id: 101, nickname: 'My Tesla',
-    plate: 'KZP-7314', state: 'NY', violation_id: 1, summons_number: v1.summons_number,
-    violation: 'New parking violation', amount_due: 50, issue_date: v1.issue_date,
+    plate: 'KZP-7314', state: 'NY', kind: 'new_fine', title: 'New fine detected',
+    body: '$50 due · My Tesla · KZP-7314', violation_id: 1, summons_number: v1.summons_number,
+    violation: 'Parking violation', amount_due: 50, issue_date: v1.issue_date,
   },
   {
     id: 2, created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), car_id: 103, nickname: 'BMW 330i',
-    plate: 'HXT-8840', state: 'NY', violation_id: 2, summons_number: v2.summons_number,
-    violation: 'Payment reminder', amount_due: 125, issue_date: v2.issue_date,
+    plate: 'HXT-8840', state: 'NY', kind: 'weekly_reminder', title: 'Weekly fine reminder',
+    body: 'BMW 330i has 2 open fines totaling $125.', violation_id: null, summons_number: null,
+    violation: null, amount_due: 125, issue_date: v2.issue_date,
   },
 ];
 

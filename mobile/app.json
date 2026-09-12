@@ -2,22 +2,22 @@
   "expo": {
     "name": "Tixradar",
     "slug": "tixradar",
-    "version": "1.2.0",
+    "version": "1.5.0",
     "orientation": "portrait",
     "icon": "./assets/tixradar-icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "scheme": "tixradar",
     "splash": {
       "image": "./assets/tixradar-splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#101611"
+      "backgroundColor": "#07111B"
     },
     "ios": {
       "supportsTablet": false
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#101611",
+        "backgroundColor": "#07111B",
         "foregroundImage": "./assets/tixradar-foreground.png"
       },
       "predictiveBackGestureEnabled": false

@@ -79,6 +79,7 @@ export interface CarSummary {
   plate: string;
   state: string;
   vin?: string | null;
+  vehicle_icon?: string | null;
   created_at?: string;
   violation_count: number | string;
   total_amount_due: number | string;
@@ -117,8 +118,11 @@ export interface NotificationEvent {
   nickname: string;
   plate: string;
   state: string;
-  violation_id: number;
-  summons_number: string;
+  kind?: 'new_fine' | 'weekly_reminder' | string;
+  title?: string | null;
+  body?: string | null;
+  violation_id?: number | null;
+  summons_number?: string | null;
   violation?: string | null;
   amount_due?: number | string | null;
   issue_date?: string | null;
@@ -146,10 +150,10 @@ async function apiFetch<T>(
   return data as T;
 }
 
-export function signup(fullName: string, email: string, password: string): Promise<Session> {
+export function signup(email: string, password: string): Promise<Session> {
   return apiFetch('/api/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ fullName, email, password }),
+    body: JSON.stringify({ email, password }),
   });
 }
 
@@ -158,6 +162,14 @@ export function login(email: string, password: string): Promise<Session> {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   });
+}
+
+
+export function updateProfile(token: string, fullName: string): Promise<{ user: User }> {
+  return apiFetch('/api/profile', {
+    method: 'PATCH',
+    body: JSON.stringify({ fullName }),
+  }, token);
 }
 
 export function fetchViolations(plate: string, state: string): Promise<ViolationsResponse> {
@@ -180,7 +192,7 @@ export function fetchCarDetail(id: number, token: string): Promise<CarDetailResp
 
 export function createCar(
   token: string,
-  input: { nickname: string; plate: string; state: string; vin?: string },
+  input: { nickname: string; plate: string; state: string; vin?: string; vehicle_icon?: string },
 ): Promise<{ car: CarSummary; violationsFetchError?: string | null; registrationFetchError?: string | null }> {
   return apiFetch('/api/cars', { method: 'POST', body: JSON.stringify(input) }, token);
 }
@@ -188,7 +200,7 @@ export function createCar(
 export function updateCar(
   id: number,
   token: string,
-  input: { nickname: string; plate: string; state: string; vin?: string },
+  input: { nickname: string; plate: string; state: string; vin?: string; vehicle_icon?: string },
 ): Promise<{ car: CarSummary; violationsFetchError?: string | null; registrationFetchError?: string | null }> {
   return apiFetch(`/api/cars/${id}`, { method: 'PATCH', body: JSON.stringify(input) }, token);
 }

@@ -54,12 +54,12 @@ async function fetchAndSaveRegistration(carId, vin) {
  * The initial fetch runs inline (not deferred to the cron) so the dashboard has data to
  * show immediately after adding a car, per the product spec.
  */
-async function createCar(userId, { nickname, plate, state, vin }) {
+async function createCar(userId, { nickname, plate, state, vin, vehicle_icon }) {
   const { rows } = await pool.query(
-    `INSERT INTO cars (user_id, nickname, plate, state, vin)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO cars (user_id, nickname, plate, state, vin, vehicle_icon)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
-    [userId, nickname, plate.toUpperCase(), (state || 'NY').toUpperCase(), vin ? vin.toUpperCase() : null]
+    [userId, nickname, plate.toUpperCase(), (state || 'NY').toUpperCase(), vin ? vin.toUpperCase() : null, vehicle_icon || 'sedan']
   );
   const car = rows[0];
 
@@ -77,7 +77,7 @@ async function createCar(userId, { nickname, plate, state, vin }) {
   };
 }
 
-async function updateCar(carId, userId, { nickname, plate, state, vin }) {
+async function updateCar(carId, userId, { nickname, plate, state, vin, vehicle_icon }) {
   const { rows: existingRows } = await pool.query(
     'SELECT * FROM cars WHERE id = $1 AND user_id = $2',
     [carId, userId]
@@ -91,15 +91,16 @@ async function updateCar(carId, userId, { nickname, plate, state, vin }) {
   const nextVin = vin === undefined
     ? existing.vin
     : (vin ? vin.trim().toUpperCase() : null);
+  const nextVehicleIcon = vehicle_icon || existing.vehicle_icon || 'sedan';
   const plateChanged = nextPlate !== existing.plate || nextState !== existing.state;
   const vinChanged = (nextVin || null) !== (existing.vin || null);
 
   const { rows } = await pool.query(
     `UPDATE cars
-     SET nickname = $1, plate = $2, state = $3, vin = $4
-     WHERE id = $5 AND user_id = $6
+     SET nickname = $1, plate = $2, state = $3, vin = $4, vehicle_icon = $5
+     WHERE id = $6 AND user_id = $7
      RETURNING *`,
-    [nextNickname, nextPlate, nextState, nextVin, carId, userId]
+    [nextNickname, nextPlate, nextState, nextVin, nextVehicleIcon, carId, userId]
   );
 
   if (plateChanged) {

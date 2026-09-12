@@ -66,8 +66,32 @@ async function login(email, password) {
   return { user, token: signToken(user) };
 }
 
+async function updateProfile(userId, fullName) {
+  const clean = String(fullName || '').trim();
+  if (!clean) {
+    const err = new Error('Nickname is required.');
+    err.status = 400;
+    throw err;
+  }
+  if (clean.length > 40) {
+    const err = new Error('Nickname must be 40 characters or fewer.');
+    err.status = 400;
+    throw err;
+  }
+  const { rows } = await pool.query(
+    'UPDATE users SET full_name = $1 WHERE id = $2 RETURNING id, email, full_name',
+    [clean, userId]
+  );
+  if (!rows[0]) {
+    const err = new Error('User not found.');
+    err.status = 404;
+    throw err;
+  }
+  return rows[0];
+}
+
 function verifyToken(token) {
   return jwt.verify(token, getJwtSecret());
 }
 
-module.exports = { signup, login, verifyToken };
+module.exports = { signup, login, updateProfile, verifyToken };
