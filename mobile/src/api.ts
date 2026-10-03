@@ -87,7 +87,39 @@ export interface CarSummary {
   created_at?: string;
   violation_count: number | string;
   total_amount_due: number | string;
+  /** Sum of this car's unpaid balances that NYC reports as IN JUDGMENT (boot/tow threshold input). */
+  judgment_debt?: number | string;
   has_registration: boolean;
+}
+
+/**
+ * Penalty / deadline timeline for one fine, computed by the server (server/src/fineTimeline.js).
+ * Amounts are NYC's own (source of truth); dates are derived from NYC's penalty schedule.
+ */
+export interface FineTimeline {
+  ticket_type: 'parking' | 'camera';
+  issue_date: string | null;
+  days_since_issue: number | null;
+  original_amount: number;
+  current_amount: number;
+  penalty_amount: number;
+  interest_amount: number;
+  unpaid: boolean;
+  /** false for tickets decided at a hearing: NYC's data has no deadline for them. */
+  schedule_known: boolean;
+  due_date: string | null;
+  days_until_due: number | null;
+  next_penalty_date: string | null;
+  next_penalty_amount: number | null;
+  scheduled_penalty_total: number;
+  last_penalty_added: number | null;
+  last_penalty_date: string | null;
+  final_notice_date: string | null;
+  judgment_status: 'none' | 'approaching' | 'likely' | 'in_judgment';
+  judgment_date: string | null;
+  estimated_judgment_date: string | null;
+  days_until_judgment: number | null;
+  amount_in_judgment: number;
 }
 
 export interface StoredViolation {
@@ -99,6 +131,7 @@ export interface StoredViolation {
   violation?: string | null;
   data: Violation;
   first_seen_at?: string;
+  timeline?: FineTimeline;
 }
 
 export interface StoredRegistration {

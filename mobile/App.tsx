@@ -26,6 +26,7 @@ import { StatusBar } from 'expo-status-bar';
 import {
   CarDetailResponse,
   CarSummary,
+  FineTimeline,
   createCar,
   deleteCar,
   fetchCarDetail,
@@ -152,7 +153,7 @@ type Route =
   | { name: 'lookupResults'; plate: string; state: string; violations: Violation[] }
   | { name: 'registrationResults'; vin: string; registrations: Registration[] }
   | { name: 'carDetail'; carId: number }
-  | { name: 'violationDetail'; violation: Violation; carName?: string }
+  | { name: 'violationDetail'; violation: Violation; carName?: string; timeline?: FineTimeline }
   | { name: 'payment'; violation: Violation }
   | { name: 'addVehicle' }
   | { name: 'editVehicle'; carId: number }
@@ -943,6 +944,8 @@ function HomeScreen({
           </TouchableOpacity>
         </View>
 
+        <EnforcementBanner judgmentDebt={totalJudgmentDebt(details)} />
+
         <View style={styles.homeMetricRow}>
           <DashboardMetricCard iconSource={ICON_OUTSTANDING} label={t('Fine balance')} value={hasDebt ? `-$${formatCompactMoney(total)}` : '$0'} tone={hasDebt ? 'red' : 'green'} />
           <DashboardMetricCard iconSource={ICON_WARNING} label={t('Open fines')} value={String(open.length)} tone={hasOpenFines ? 'red' : 'green'} />
@@ -1148,7 +1151,7 @@ function CarDetailScreen({
         {tab === 'unpaid' ? (
           <View style={{ gap: 10 }}>
             {open.map((stored) => (
-              <FineRow key={stored.id} violation={stored.data} onPress={() => setRoute({ name: 'violationDetail', violation: stored.data, carName: car.nickname })} />
+              <FineRow key={stored.id} violation={stored.data} timeline={stored.timeline} onPress={() => setRoute({ name: 'violationDetail', violation: stored.data, carName: car.nickname, timeline: stored.timeline })} />
             ))}
             {open.length === 0 ? <EmptyCard iconSource={ICON_FINES} title={t('No unpaid fines')} body={t('This vehicle is clear. New fines will appear here automatically when Tixradar detects them.')} /> : null}
           </View>
@@ -1157,7 +1160,7 @@ function CarDetailScreen({
         {tab === 'paid' ? (
           <View style={{ gap: 10 }}>
             {paid.map((stored) => (
-              <FineRow key={stored.id} violation={stored.data} onPress={() => setRoute({ name: 'violationDetail', violation: stored.data, carName: car.nickname })} />
+              <FineRow key={stored.id} violation={stored.data} timeline={stored.timeline} onPress={() => setRoute({ name: 'violationDetail', violation: stored.data, carName: car.nickname, timeline: stored.timeline })} />
             ))}
             {paid.length === 0 ? <EmptyCard iconSource={ICON_FINES} title={t('No paid fines')} body={t('Fines that have been paid or resolved with NYC will show up here.')} /> : null}
           </View>
@@ -1223,6 +1226,7 @@ function FinesScreen({
     <View style={styles.screenFlex}>
       <AppScroll bottomInset refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} tintColor={GREEN_DARK} />}>
         <Header title={t('Fines')} subtitle={t('Parking and camera violations across your garage.')} />
+        <EnforcementBanner judgmentDebt={totalJudgmentDebt(details)} />
         <View style={styles.segmentRow}>
           <Segment label={t('All ({count})', { count: items.length })} active={filter === 'all'} onPress={() => setFilter('all')} />
           <Segment label={t('Unpaid ({count})', { count: unpaid })} active={filter === 'unpaid'} onPress={() => setFilter('unpaid')} />
@@ -1230,7 +1234,7 @@ function FinesScreen({
         </View>
         <View style={{ gap: 10 }}>
           {filtered.map((item) => (
-            <FineRow key={`${item.car.id}-${item.violation.summons_number}`} violation={item.violation} carName={item.car.nickname} onPress={() => setRoute({ name: 'violationDetail', violation: item.violation, carName: item.car.nickname })} />
+            <FineRow key={`${item.car.id}-${item.violation.summons_number}`} violation={item.violation} carName={item.car.nickname} timeline={item.timeline} onPress={() => setRoute({ name: 'violationDetail', violation: item.violation, carName: item.car.nickname, timeline: item.timeline })} />
           ))}
         </View>
         {filtered.length === 0 && (
@@ -1244,9 +1248,12 @@ function FinesScreen({
   );
 }
 
-function FineRow({ violation, carName, onPress }: { violation: Violation; carName?: string; onPress: () => void }) {
+function FineRow({ violation, carName, timeline, onPress }: { violation: Violation; carName?: string; timeline?: FineTimeline; onPress: () => void }) {
   const due = toMoney(violation.amount_due);
   const shownAmount = due > 0 ? due : toMoney(violation.payment_amount);
+  // The single most relevant status for the list: judgment first, else the next deadline.
+  const statusLines = fineStatusLines(timeline);
+  const status = statusLines.find((line) => line.tone === 'red') ?? statusLines[statusLines.length - 1];
   return (
     <TouchableOpacity style={styles.fineRow} onPress={onPress} activeOpacity={0.85} accessibilityRole="button">
       <View style={[styles.fineTypeIcon, due > 0 ? styles.fineTypeIconOpen : styles.fineTypeIconPaid]}>
@@ -1256,6 +1263,7 @@ function FineRow({ violation, carName, onPress }: { violation: Violation; carNam
         <Text style={styles.fineRowTitle} numberOfLines={1}>{friendlyViolation(violation.violation)}</Text>
         <Text style={styles.fineRowMeta} numberOfLines={1}>#{violation.summons_number}{carName ? ` · ${carName}` : ''}</Text>
         <Text style={styles.fineRowMeta} numberOfLines={1}>{formatIssueDate(violation.issue_date)}{violation.street_name ? ` · ${violation.street_name}` : ''}</Text>
+        {status ? <Text style={[styles.fineStatusLine, statusToneStyle(status.tone)]} numberOfLines={1}>{status.text}</Text> : null}
       </View>
       <View style={styles.fineRight}><Text style={styles.fineRowAmount}>${shownAmount.toFixed(2)}</Text><Pill label={due > 0 ? t('Unpaid') : t('Paid')} tone={due > 0 ? 'red' : 'green'} /></View>
       <Chevron />
@@ -1278,6 +1286,7 @@ function ViolationDetailScreen({ route, setRoute, goBack }: { route: Extract<Rou
         <Text style={styles.bigMoney}>${(due > 0 ? due : toMoney(v.payment_amount)).toFixed(2)}</Text>
         {due === 0 ? <Text style={styles.violationHeaderSub}>{t('Paid to NYC')}</Text> : null}
       </View>
+      <FineDeadlineCard timeline={route.timeline} />
       <View style={styles.detailList}>
         <DetailLine iconSource={ICON_NOTIFICATION} label={t('Date')} value={formatIssueDate(v.issue_date)} sub={v.violation_time || undefined} />
         <DetailLine iconSource={ICON_HOME} label={t('Location')} value={violationLocation(v)} sub={v.county || t('New York, NY')} />
@@ -1958,8 +1967,119 @@ function normalizeVehicleIcon(value?: string | null): VehicleIconKey {
 }
 function carImageForCar(car: Pick<CarSummary, 'vehicle_icon'>) { return VEHICLE_ICON_ASSETS[normalizeVehicleIcon(car.vehicle_icon)]; }
 
+// ---- Penalty / deadline display (rules: server/src/fineTimeline.js) ----
+
+type StatusTone = 'red' | 'amber' | 'muted';
+type StatusLine = { text: string; tone: StatusTone };
+
+// NYC may boot or tow vehicles whose owner has more than this in debt that's IN JUDGMENT
+// (not ordinary unpaid tickets). A softer warning starts at ENFORCEMENT_NEAR_AMOUNT.
+const ENFORCEMENT_THRESHOLD = 350;
+const ENFORCEMENT_NEAR_AMOUNT = 250;
+
+/**
+ * Status lines for an unpaid fine. "Added" is only claimed when NYC's own data shows the
+ * penalty; NYC posts penalties days to weeks after the scheduled date, so in between the
+ * fine says a penalty may be added any day. Upcoming dates come from NYC's schedule.
+ */
+function fineStatusLines(tl?: FineTimeline): StatusLine[] {
+  if (!tl || !tl.unpaid) return [];
+  if (tl.judgment_status === 'in_judgment') {
+    return [{ text: t('IN JUDGMENT'), tone: 'red' }, { text: t('Interest may be accruing'), tone: 'red' }];
+  }
+  if (!tl.schedule_known) return [{ text: t('Decided at a hearing: pay the balance shown'), tone: 'muted' }];
+
+  const camera = tl.ticket_type === 'camera';
+  const lines: StatusLine[] = [];
+  if (tl.penalty_amount > 0) {
+    const amount = formatCompactMoney(tl.penalty_amount);
+    lines.push({
+      text: camera || tl.penalty_amount === 10 ? t('${amount} late penalty added', { amount }) : t('${amount} total late penalties', { amount }),
+      tone: 'amber',
+    });
+  }
+  if (tl.scheduled_penalty_total > tl.penalty_amount) lines.push({ text: t('A late penalty may be added any day'), tone: 'amber' });
+
+  if (tl.next_penalty_amount && tl.days_until_due !== null) {
+    const days = tl.days_until_due + 1; // the penalty applies the day after the due date
+    const amount = formatCompactMoney(tl.next_penalty_amount);
+    const [inDays, tomorrow] = camera
+      ? ['${amount} late penalty in {days} days', '${amount} late penalty tomorrow']
+      : tl.scheduled_penalty_total === 0
+        ? ['First ${amount} late penalty in {days} days', 'First ${amount} late penalty tomorrow']
+        : ['Additional ${amount} penalty in {days} days', 'Additional ${amount} penalty tomorrow'];
+    lines.push({ text: days === 1 ? t(tomorrow, { amount }) : t(inDays, { amount, days }), tone: days <= 7 ? 'amber' : 'muted' });
+  } else if (camera) {
+    lines.push({ text: t('Resolve this violation to avoid judgment'), tone: tl.judgment_status === 'none' ? 'amber' : 'red' });
+  } else {
+    lines.push({ text: t('Judgment approaching'), tone: 'red' });
+  }
+  return lines;
+}
+
+function statusToneStyle(tone: StatusTone) {
+  return tone === 'red' ? { color: APP_RED } : tone === 'amber' ? { color: AMBER } : { color: APP_MUTED };
+}
+
+/** "2026-10-14" -> local short date, without the UTC-midnight off-by-one. */
+function formatIsoDay(value?: string | null) {
+  if (!value) return t('Not available');
+  return formatDate(`${value}T12:00:00`);
+}
+
+/** Total of the user's unpaid balances that NYC reports as IN JUDGMENT. */
+function totalJudgmentDebt(details: Record<number, CarDetailResponse>) {
+  return Object.values(details).reduce(
+    (sum, detail) => sum + detail.violations.reduce((carSum, v) => carSum + (v.timeline?.amount_in_judgment ?? 0), 0),
+    0,
+  );
+}
+
+function FineDeadlineCard({ timeline }: { timeline?: FineTimeline }) {
+  const lines = fineStatusLines(timeline);
+  if (!timeline || lines.length === 0) return null;
+  return (
+    <View style={styles.fineDeadlineCard}>
+      <Text style={styles.fineDeadlineDue}>{t('Payment Due: ${amount}', { amount: formatCompactMoney(timeline.current_amount) })}</Text>
+      <Text style={styles.fineDeadlineMeta}>
+        {timeline.ticket_type === 'camera' ? t('Camera violation') : t('Parking ticket')}
+        {timeline.days_since_issue !== null ? ` · ${t('Issued {days} days ago', { days: timeline.days_since_issue })}` : ''}
+      </Text>
+      {lines.map((line) => <Text key={line.text} style={[styles.fineDeadlineLine, statusToneStyle(line.tone)]}>{line.text}</Text>)}
+      {timeline.next_penalty_amount && timeline.due_date ? (
+        <Text style={styles.fineDeadlineMeta}>{t('Pay by {date} to avoid the next penalty', { date: formatIsoDay(timeline.due_date) })}</Text>
+      ) : null}
+      {timeline.judgment_date ? (
+        <Text style={styles.fineDeadlineMeta}>{t('In judgment since {date}', { date: formatIsoDay(timeline.judgment_date) })}</Text>
+      ) : timeline.estimated_judgment_date ? (
+        <Text style={styles.fineDeadlineMeta}>{t('Judgment expected around {date}', { date: formatIsoDay(timeline.estimated_judgment_date) })}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function EnforcementBanner({ judgmentDebt }: { judgmentDebt: number }) {
+  if (judgmentDebt < ENFORCEMENT_NEAR_AMOUNT) return null;
+  const exceeded = judgmentDebt > ENFORCEMENT_THRESHOLD;
+  return (
+    <View style={[styles.enforcementBanner, exceeded ? styles.enforcementBannerRisk : styles.enforcementBannerNear]}>
+      <IconImage source={ICON_WARNING} size={20} tint={exceeded ? APP_RED : AMBER} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={[styles.enforcementTitle, { color: exceeded ? APP_RED : AMBER }]}>
+          {exceeded ? t('WARNING: ENFORCEMENT RISK') : t('Judgment debt: ${amount}', { amount: formatCompactMoney(judgmentDebt) })}
+        </Text>
+        <Text style={styles.enforcementBody}>
+          {exceeded
+            ? t('You have more than $350 in NYC parking/camera judgment debt. Your vehicle may be eligible for booting or towing.')
+            : t('NYC may boot or tow vehicles whose owners have more than $350 in judgment debt.')}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 function flattenViolations(details: Record<number, CarDetailResponse>) {
-  return Object.values(details).flatMap((detail) => detail.violations.map((stored) => ({ car: detail.car, violation: stored.data })));
+  return Object.values(details).flatMap((detail) => detail.violations.map((stored) => ({ car: detail.car, violation: stored.data, timeline: stored.timeline })));
 }
 function carOpenCount(detail?: CarDetailResponse) { return detail?.violations.filter((v) => toMoney(v.amount_due) > 0).length ?? 0; }
 function toMoney(value: string | number | null | undefined) { const n = Number.parseFloat(String(value ?? '0')); return Number.isFinite(n) ? n : 0; }
@@ -1998,7 +2118,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
 function greetingForTime() { const hour = new Date().getHours(); return hour < 12 ? t('Good morning') : hour < 18 ? t('Good afternoon') : t('Good evening'); }
 async function copyText(value: string, message = t('Copied')) { await Clipboard.setStringAsync(value); Alert.alert(message); }
 function friendlyViolation(value?: string) { if (!value) return t('Parking Violation'); const translated = getLanguage() === 'en' ? null : VIOLATION_NAMES[value.trim().toUpperCase()]?.[getLanguage()]; if (translated) return translated; const text = value.toLowerCase(); if (text.includes('camera')) return t('Speed Camera'); if (text.includes('bus')) return t('Bus Lane Violation'); if (text.includes('no standing')) return t('No Standing'); if (text.includes('parking')) return value.replace(/\b\w/g, (c) => c.toUpperCase()); return value.replace(/[-_]/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()); }
-function violationLocation(v: Violation) { return [v.house_number, v.street_name].filter(Boolean).join(' & ') || 'New York City'; }
+function violationLocation(v: Violation) { return [v.house_number, v.street_name].filter(Boolean).join(' & ') || t('New York City'); }
 function timeAgo(value: string) { const ms = Date.now() - new Date(value).getTime(); const mins = Math.max(1, Math.round(ms / 60000)); if (mins < 60) return t('{count}m ago', { count: mins }); const hours = Math.round(mins / 60); if (hours < 24) return t('{count}h ago', { count: hours }); return t('{count}d ago', { count: Math.round(hours / 24) }); }
 // Server errors are fixed English sentences; the known ones have translations (unknown ones stay as-is).
 function getErrorMessage(err: unknown) { return err instanceof Error ? t(err.message) : t('Something went wrong. Please try again.'); }
@@ -2260,6 +2380,16 @@ const styles = StyleSheet.create({
   fineTypeIconText: { color: INK, fontSize: 16, fontWeight: '900' },
   fineRowTitle: { color: APP_TEXT, fontSize: 13, fontWeight: '900' },
   fineRowMeta: { color: APP_MUTED, fontSize: 10, marginTop: 2 },
+  fineStatusLine: { fontSize: 10, fontWeight: '800', marginTop: 4 },
+  fineDeadlineCard: { backgroundColor: APP_CARD, borderRadius: 22, borderWidth: 1, borderColor: APP_BORDER, padding: 16, marginBottom: 12, gap: 6 },
+  fineDeadlineDue: { color: APP_TEXT, fontSize: 18, fontWeight: '900' },
+  fineDeadlineLine: { fontSize: 13, fontWeight: '800' },
+  fineDeadlineMeta: { color: APP_MUTED, fontSize: 11 },
+  enforcementBanner: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, borderRadius: 18, borderWidth: 1, padding: 14, marginBottom: 16 },
+  enforcementBannerRisk: { backgroundColor: APP_RED_SOFT, borderColor: APP_RED },
+  enforcementBannerNear: { backgroundColor: APP_CARD, borderColor: AMBER },
+  enforcementTitle: { fontSize: 13, fontWeight: '900' },
+  enforcementBody: { color: APP_TEXT, fontSize: 12, marginTop: 4, lineHeight: 17 },
   fineRight: { alignItems: 'flex-end', gap: 5 },
   fineRowAmount: { color: APP_TEXT, fontSize: 13, fontWeight: '900' },
   pill: { borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5, alignSelf: 'flex-start' },
@@ -2267,7 +2397,7 @@ const styles = StyleSheet.create({
 
   violationHeaderCard: { backgroundColor: APP_CARD, borderRadius: 22, borderWidth: 1, borderColor: APP_BORDER, padding: 16, marginBottom: 12 },
   violationHeaderTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  redIcon: { width: 45, height: 45, borderRadius: 14, backgroundColor: RED, alignItems: 'center', justifyContent: 'center' },
+  redIcon: { width: 45, height: 45, borderRadius: 14, backgroundColor: APP_RED_SOFT, alignItems: 'center', justifyContent: 'center' },
   redIconText: { color: '#fff', fontSize: 18, fontWeight: '900' },
   violationHeaderTitle: { color: APP_TEXT, fontSize: 15, fontWeight: '900' },
   violationHeaderSub: { color: APP_MUTED, fontSize: 11, marginTop: 2 },

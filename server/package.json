@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "migrate": "node src/db/migrate.js",
+    "seed:test-plates": "node scripts/seed-test-plates.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

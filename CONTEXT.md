@@ -97,6 +97,35 @@ texts and a copy of `VIOLATION_NAMES` — keep that copy in sync with `mobile/sr
 Known fixed server error messages are translated in the app at display time
 (`getErrorMessage` → `t(err.message)`), so keep their English text stable.
 
+## Penalty / deadline timeline (due dates, reminders, boot/tow)
+
+NYC's open data has **no due-date field**. `server/src/fineTimeline.js` derives deadlines
+from NYC's penalty schedules, counted from `issue_date` (never from when we first saw the
+ticket); NYC's own `amount_due` / `penalty_amount` / `judgment_entry_date` stay the source of
+truth for what's owed and whether a ticket is in judgment.
+
+- **Parking**: day 31 +$10, day 61 +$20 (=$30), day 91 +$30 (=$60), judgment ~day 100.
+- **Camera** (`PHTO` speed, red light, bus lane, "MTA CAMERA VIOLATION ...", or issuing
+  agency DOT): day 31 +$25 (only penalty), final notice ~day 65, judgment ~day 75.
+- **Hearing-decided tickets** (`violation_status` "HEARING ...") follow the hearing
+  decision's deadline, which the data doesn't include: no countdown, balance only.
+- **Boot/tow**: only debt that has *entered judgment* counts; > $350 = enforcement risk
+  (warning from $250). Ordinary unpaid tickets don't count.
+
+Checked against ~6,500 real unpaid tickets on 2026-10-03: NYC **never** posts a penalty
+earlier than this schedule, but often **later** (parking +$10 usually shows up days 41-60,
+camera +$25 days 51-60; judgment entered days 106-120 parking, 79-93 camera). So reminders
+use the schedule (they can only be early, never late), while "penalty added" is only
+announced once NYC's data shows it, and the UI says a penalty "may be added any day" in
+between.
+
+Notifications (all in the owner's language, deduped via `notification_events.reminder_key`):
+hourly sweep -> new fine, penalty added, entered judgment; daily 9:00 NY
+(`runDeadlineReminders`) -> upcoming penalty 14/7/4/1 days before the due date (last one the
+day before), approaching judgment on the same cadence, weekly boot/tow warning.
+`npm run seed:test-plates` (server) creates a local test account with real plates covering
+each state.
+
 ## Mobile app specifics
 
 - `mobile/src/api.ts` has `API_BASE_URL` **hardcoded to a LAN IP** for phone-over-WiFi

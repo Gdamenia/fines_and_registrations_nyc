@@ -1,6 +1,23 @@
 const { pool } = require('./db/pool');
 const { getViolationsByPlate } = require('./socrata');
 const { getRegistrationByVin } = require('./dmvRegistration');
+const { computeTimeline, nycToday } = require('./fineTimeline');
+
+/** Timeline columns for a violations row, from the raw NYC record. */
+function timelineValues(record, today) {
+  const t = computeTimeline(record, today);
+  return [
+    t.ticket_type, t.issue_date, t.original_amount, t.penalty_amount, t.interest_amount,
+    t.days_since_issue, t.due_date, t.next_penalty_date, t.next_penalty_amount,
+    t.judgment_status, t.judgment_date, t.estimated_judgment_date, t.amount_in_judgment,
+  ];
+}
+
+const TIMELINE_SET = `
+  ticket_type = $1, issued_on = $2, original_amount = $3, penalty_amount = $4, interest_amount = $5,
+  days_since_issue = $6, due_date = $7, next_penalty_date = $8, next_penalty_amount = $9,
+  judgment_status = $10, judgment_date = $11, estimated_judgment_date = $12, amount_in_judgment = $13,
+  timeline_updated_at = now()`;
 
 /**
  * Fetch violations for a car from Socrata and upsert them.
@@ -15,8 +32,18 @@ const { getRegistrationByVin } = require('./dmvRegistration');
  */
 async function fetchAndSaveViolations(carId, plate, state) {
   const violations = await getViolationsByPlate(plate, state, { limit: 200 });
+  const today = nycToday();
 
-  const newlyInserted = [];
+  // What we had before this fetch, to notice NYC adding a penalty or entering judgment.
+  const { rows: existingRows } = await pool.query(
+    "SELECT summons_number, data->>'penalty_amount' AS penalty, data->>'judgment_entry_date' AS judgment FROM violations WHERE car_id = $1",
+    [carId]
+  );
+  const before = new Map(existingRows.map((r) => [r.summons_number, r]));
+
+  const inserted = [];
+  const penaltyAdded = []; // { row, added } - NYC's penalty_amount went up
+  const enteredJudgment = []; // rows that NYC newly reports as in judgment
   for (const v of violations) {
     if (!v.summons_number) continue; // shouldn't happen, but don't let a bad row crash the sweep
 
@@ -32,11 +59,34 @@ async function fetchAndSaveViolations(carId, plate, state) {
        RETURNING *, (xmax = 0) AS inserted`,
       [carId, v.summons_number, v.amount_due ?? null, v.issue_date ?? null, v.violation ?? null, v]
     );
-    const { inserted, ...row } = rows[0];
-    if (inserted) newlyInserted.push(row);
+    const { inserted: isNew, ...row } = rows[0];
+    await pool.query(`UPDATE violations SET ${TIMELINE_SET} WHERE id = $14`, [...timelineValues(v, today), row.id]);
+
+    if (isNew) {
+      inserted.push(row);
+      continue;
+    }
+    const previous = before.get(String(v.summons_number));
+    const unpaid = Number(v.amount_due || 0) > 0;
+    const added = Number(v.penalty_amount || 0) - Number(previous?.penalty || 0);
+    if (unpaid && added > 0) penaltyAdded.push({ row, added });
+    if (unpaid && v.judgment_entry_date && !previous?.judgment) enteredJudgment.push(row);
   }
 
-  return newlyInserted;
+  return { inserted, penaltyAdded, enteredJudgment };
+}
+
+/**
+ * Recompute every stored violation's timeline columns for today. Run daily: countdowns
+ * move every day even when NYC's record doesn't change.
+ */
+async function refreshTimelines() {
+  const today = nycToday();
+  const { rows } = await pool.query('SELECT id, data FROM violations');
+  for (const row of rows) {
+    await pool.query(`UPDATE violations SET ${TIMELINE_SET} WHERE id = $14`, [...timelineValues(row.data, today), row.id]);
+  }
+  return rows.length;
 }
 
 /**
@@ -150,10 +200,12 @@ async function listCarsForUser(userId) {
        cars.*,
        COALESCE(v.violation_count, 0) AS violation_count,
        COALESCE(v.total_amount_due, 0) AS total_amount_due,
+       COALESCE(v.judgment_debt, 0) AS judgment_debt,
        (registrations.car_id IS NOT NULL) AS has_registration
      FROM cars
      LEFT JOIN (
-       SELECT car_id, COUNT(*) AS violation_count, SUM(amount_due) AS total_amount_due
+       SELECT car_id, COUNT(*) AS violation_count, SUM(amount_due) AS total_amount_due,
+              SUM(amount_in_judgment) AS judgment_debt
        FROM violations
        GROUP BY car_id
      ) v ON v.car_id = cars.id
@@ -186,7 +238,10 @@ async function getCarDetail(carId, userId) {
     pool.query('SELECT * FROM registrations WHERE car_id = $1', [carId]),
   ]);
 
-  return { car, violations, registration: registrationRows[0] || null };
+  // Live timeline (countdowns as of today) for each fine; see src/fineTimeline.js.
+  const today = nycToday();
+  const withTimeline = violations.map((v) => ({ ...v, timeline: computeTimeline(v.data, today) }));
+  return { car, violations: withTimeline, registration: registrationRows[0] || null };
 }
 
 /** Returns true if a car was deleted, false if it didn't exist / wasn't owned by this user. */
@@ -214,5 +269,6 @@ module.exports = {
   deleteCar,
   listAllCars,
   fetchAndSaveViolations,
+  refreshTimelines,
   fetchAndSaveRegistration,
 };
