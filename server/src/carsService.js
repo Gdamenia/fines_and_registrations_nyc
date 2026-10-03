@@ -198,8 +198,11 @@ async function deleteCar(carId, userId) {
   return rowCount > 0;
 }
 
+/** Every car with its owner's language (owner_language), for the notification sweep. */
 async function listAllCars() {
-  const { rows } = await pool.query('SELECT * FROM cars');
+  const { rows } = await pool.query(
+    'SELECT c.*, u.language AS owner_language FROM cars c JOIN users u ON u.id = c.user_id'
+  );
   return rows;
 }
 

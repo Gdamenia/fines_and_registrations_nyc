@@ -1,3 +1,5 @@
+import type { Lang } from './i18n';
+
 // Tixradar API client.
 // For local development set EXPO_PUBLIC_API_BASE_URL to your Mac/PC LAN URL, for example:
 // EXPO_PUBLIC_API_BASE_URL=http://192.168.1.20:3001 npx expo start
@@ -9,6 +11,8 @@ export interface User {
   id: number;
   email: string;
   full_name?: string | null;
+  /** The account's saved app language; null if it was never chosen. */
+  language?: Lang | null;
 }
 
 export interface Session {
@@ -150,10 +154,10 @@ async function apiFetch<T>(
   return data as T;
 }
 
-export function signup(email: string, password: string): Promise<Session> {
+export function signup(email: string, password: string, language?: Lang): Promise<Session> {
   return apiFetch('/api/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, language }),
   });
 }
 
@@ -165,11 +169,17 @@ export function login(email: string, password: string): Promise<Session> {
 }
 
 
-export function updateProfile(token: string, fullName: string): Promise<{ user: User }> {
+/** Update the nickname and/or the saved language; send only what changed. */
+export function updateProfile(token: string, input: { fullName?: string; language?: Lang }): Promise<{ user: User }> {
   return apiFetch('/api/profile', {
     method: 'PATCH',
-    body: JSON.stringify({ fullName }),
+    body: JSON.stringify(input),
   }, token);
+}
+
+/** The signed-in user as stored on the server (incl. their saved language). */
+export function fetchMe(token: string): Promise<{ user: User }> {
+  return apiFetch('/api/me', {}, token);
 }
 
 export function fetchViolations(plate: string, state: string): Promise<ViolationsResponse> {

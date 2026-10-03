@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { getViolationsByPlate } = require('./socrata');
 const { getRegistrationByVin } = require('./dmvRegistration');
-const { signup, login, updateProfile } = require('./auth');
+const { signup, login, updateProfile, getUser } = require('./auth');
 const { requireAuth } = require('./middleware/requireAuth');
 const carsService = require('./carsService');
 const { registerPushToken } = require('./push');
@@ -34,7 +34,7 @@ function sendError(res, err) {
 // ---- Auth ----
 
 app.post('/api/auth/signup', async (req, res) => {
-  const { email, password, fullName } = req.body;
+  const { email, password, fullName, language } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password are both required.' });
   }
@@ -43,7 +43,7 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 
   try {
-    const { user, token } = await signup(email, password, fullName);
+    const { user, token } = await signup(email, password, fullName, language);
     res.status(201).json({ user, token });
   } catch (err) {
     sendError(res, err);
@@ -65,9 +65,20 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 app.patch('/api/profile', requireAuth, async (req, res) => {
-  const { fullName } = req.body;
+  const { fullName, language } = req.body;
   try {
-    const user = await updateProfile(req.userId, fullName);
+    const user = await updateProfile(req.userId, { fullName, language });
+    res.json({ user });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// The signed-in user, incl. their saved language - the app reads this on every launch.
+app.get('/api/me', requireAuth, async (req, res) => {
+  try {
+    const user = await getUser(req.userId);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
     res.json({ user });
   } catch (err) {
     sendError(res, err);

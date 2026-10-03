@@ -34,6 +34,7 @@ import {
   fetchRegistration,
   fetchViolations,
   login,
+  fetchMe,
   NotificationEvent,
   Registration,
   Session,
@@ -43,7 +44,7 @@ import {
   Violation,
 } from './src/api';
 import { DEMO_CARS, DEMO_DETAILS, DEMO_NOTIFICATIONS, DEMO_SESSION } from './src/demo';
-import { APP_LANGUAGES, getLanguage, getLocale, loadSavedLanguage, saveLanguage, setLanguage, t, type Lang } from './src/strings';
+import { APP_LANGUAGES, getLanguage, getLocale, isLang, loadSavedLanguage, saveLanguage, setLanguage, t, type Lang } from './src/strings';
 import { VIOLATION_NAMES } from './src/i18n';
 
 const GREEN = '#8DFF16';
@@ -238,12 +239,25 @@ export default function App() {
         AsyncStorage.getItem(SESSION_KEY),
         loadSavedLanguage(),
       ]);
-      setLanguageState(savedLanguage);
+      let language = savedLanguage;
       setIntroComplete(savedIntro === '1');
       if (savedSession) {
         const parsed = JSON.parse(savedSession) as Session;
         setSession(parsed);
+        // Signed in: the language saved on the account wins (it may have been changed on
+        // another device). Wait briefly only if this device has none yet, so a signed-in
+        // user isn't shown the language screen when their account already has one.
+        const accountLanguage = accountLanguageRequest(parsed);
+        if (!language) {
+          language = (await withTimeout(accountLanguage, 4000)) ?? null;
+          if (language) await saveLanguage(language);
+        } else {
+          const deviceLanguage = language;
+          void accountLanguage.then((saved) => { if (saved && saved !== deviceLanguage) void applyLanguage(saved); });
+        }
+        if (language) setLanguage(language);
       }
+      setLanguageState(language);
     } catch {
       // A corrupt local cache should never prevent the app from opening.
     } finally {
@@ -318,14 +332,45 @@ export default function App() {
     demoInitialized.current = false;
     await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(next));
     setSession(next);
+    void syncAccountLanguage(next);
     setHistory([]);
     setCurrentRoute({ name: 'main', tab: 'home' });
   }
 
-  async function chooseLanguage(next: Lang) {
+  /** Use a language on this device (no server call). */
+  async function applyLanguage(next: Lang) {
     setLanguage(next);
     setLanguageState(next);
     await saveLanguage(next);
+  }
+
+  /** The user picked a language: use it, and save it to their account if signed in. */
+  async function chooseLanguage(next: Lang) {
+    await applyLanguage(next);
+    if (session && !session.demo) {
+      try {
+        await updateProfile(session.token, { language: next });
+      } catch {
+        // Offline / expired token: the device keeps the choice; it's uploaded on the next sign-in.
+      }
+    }
+  }
+
+  /**
+   * After sign-in: the account's saved language wins; an account without one yet gets
+   * the language chosen on this device.
+   */
+  async function syncAccountLanguage(next: Session) {
+    if (next.demo) return;
+    if (isLang(next.user.language)) {
+      if (next.user.language !== getLanguage()) await applyLanguage(next.user.language);
+      return;
+    }
+    try {
+      await updateProfile(next.token, { language: getLanguage() });
+    } catch {
+      // Not critical: retried on the next sign-in.
+    }
   }
 
   async function signOut() {
@@ -432,7 +477,7 @@ export default function App() {
 
     const user = session.demo
       ? { ...session.user, full_name: clean }
-      : (await updateProfile(session.token, clean)).user;
+      : (await updateProfile(session.token, { fullName: clean })).user;
     const nextSession: Session = { ...session, user };
     setSession(nextSession);
     await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
@@ -728,7 +773,7 @@ function AuthScreen({
     if (mode === 'signup' && password.length < 8) return setError(t('Use at least 8 characters for your password.'));
     setLoading(true);
     try {
-      const next = mode === 'signin' ? await login(cleanEmail, password) : await signup(cleanEmail, password);
+      const next = mode === 'signin' ? await login(cleanEmail, password) : await signup(cleanEmail, password, getLanguage());
       onSession(next, mode === 'signup');
     } catch (err) {
       setError(getErrorMessage(err));
@@ -1935,12 +1980,28 @@ function formatCompactMoney(value: number) {
   const rounded = Math.round(value * 100) / 100;
   return Number.isInteger(rounded) ? rounded.toLocaleString('en-US') : rounded.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+/** The account's saved language from the server; null if none, offline, or a demo session. */
+async function accountLanguageRequest(current: Session): Promise<Lang | null> {
+  if (current.demo) return null;
+  try {
+    const { user } = await fetchMe(current.token);
+    return isLang(user.language) ? user.language : null;
+  } catch {
+    return null;
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([promise, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
+}
+
 function greetingForTime() { const hour = new Date().getHours(); return hour < 12 ? t('Good morning') : hour < 18 ? t('Good afternoon') : t('Good evening'); }
 async function copyText(value: string, message = t('Copied')) { await Clipboard.setStringAsync(value); Alert.alert(message); }
 function friendlyViolation(value?: string) { if (!value) return t('Parking Violation'); const translated = getLanguage() === 'en' ? null : VIOLATION_NAMES[value.trim().toUpperCase()]?.[getLanguage()]; if (translated) return translated; const text = value.toLowerCase(); if (text.includes('camera')) return t('Speed Camera'); if (text.includes('bus')) return t('Bus Lane Violation'); if (text.includes('no standing')) return t('No Standing'); if (text.includes('parking')) return value.replace(/\b\w/g, (c) => c.toUpperCase()); return value.replace(/[-_]/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()); }
 function violationLocation(v: Violation) { return [v.house_number, v.street_name].filter(Boolean).join(' & ') || 'New York City'; }
-function timeAgo(value: string) { const ms = Date.now() - new Date(value).getTime(); const mins = Math.max(1, Math.round(ms / 60000)); if (mins < 60) return `${mins}m ago`; const hours = Math.round(mins / 60); if (hours < 24) return `${hours}h ago`; return `${Math.round(hours / 24)}d ago`; }
-function getErrorMessage(err: unknown) { return err instanceof Error ? err.message : t('Something went wrong. Please try again.'); }
+function timeAgo(value: string) { const ms = Date.now() - new Date(value).getTime(); const mins = Math.max(1, Math.round(ms / 60000)); if (mins < 60) return t('{count}m ago', { count: mins }); const hours = Math.round(mins / 60); if (hours < 24) return t('{count}h ago', { count: hours }); return t('{count}d ago', { count: Math.round(hours / 24) }); }
+// Server errors are fixed English sentences; the known ones have translations (unknown ones stay as-is).
+function getErrorMessage(err: unknown) { return err instanceof Error ? t(err.message) : t('Something went wrong. Please try again.'); }
 async function copySummons(value: string) { await Clipboard.setStringAsync(value); Alert.alert(t('Copied'), t('Summons #{number} copied to your clipboard.', { number: value })); }
 
 // ---------- Styles ----------

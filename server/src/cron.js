@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const { pool } = require('./db/pool');
 const { listAllCars, fetchAndSaveViolations } = require('./carsService');
 const { sendPushToUser } = require('./push');
+const { newFineNotification, weeklyReminderNotification } = require('./language');
 
 /**
  * Hourly sweep: refresh tracked plates and notify the owner when a genuinely new
@@ -21,9 +22,12 @@ async function runSweep() {
     }
 
     for (const violation of newlyInserted) {
-      const amount = Number(violation.amount_due || 0);
-      const title = `New fine on ${car.nickname}`;
-      const body = `${amount > 0 ? `$${amount.toFixed(2)} due · ` : ''}${violation.violation || 'A new NYC violation was recorded.'}`;
+      // Written in the owner's chosen language (English if they never chose one).
+      const { title, body } = newFineNotification(car.owner_language, {
+        nickname: car.nickname,
+        amountDue: violation.amount_due,
+        violation: violation.violation,
+      });
       const { rows } = await pool.query(
         `INSERT INTO notification_events (car_id, violation_id, kind, title, body)
          VALUES ($1, $2, 'new_fine', $3, $4)
@@ -73,12 +77,14 @@ async function runWeeklyFineReminders() {
       c.nickname,
       c.plate,
       c.state,
+      u.language AS owner_language,
       COUNT(v.id)::int AS open_count,
       COALESCE(SUM(v.amount_due), 0)::numeric AS total_due
     FROM cars c
+    JOIN users u ON u.id = c.user_id
     JOIN violations v ON v.car_id = c.id
     WHERE COALESCE(v.amount_due, 0) > 0
-    GROUP BY c.id, c.user_id, c.nickname, c.plate, c.state
+    GROUP BY c.id, c.user_id, c.nickname, c.plate, c.state, u.language
     ORDER BY c.id
   `);
 
@@ -86,9 +92,11 @@ async function runWeeklyFineReminders() {
   let created = 0;
 
   for (const row of rows) {
-    const total = Number(row.total_due || 0);
-    const title = 'Weekly fine reminder';
-    const body = `${row.nickname} has ${row.open_count} open fine${row.open_count === 1 ? '' : 's'} totaling $${total.toFixed(2)}.`;
+    const { title, body } = weeklyReminderNotification(row.owner_language, {
+      nickname: row.nickname,
+      openCount: row.open_count,
+      totalDue: row.total_due,
+    });
     const reminderKey = `${weekKey}:car:${row.car_id}`;
 
     const result = await pool.query(

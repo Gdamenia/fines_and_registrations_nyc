@@ -85,8 +85,17 @@ language is chosen on the very first screen (four standalone buttons, nothing el
 can be changed later in Profile & Settings → Language; it's stored in AsyncStorage under
 `tixradar:language`. Module-level data (e.g. `OFFERS`) is translated where it's rendered
 (`t(offer.title)`), not where it's defined. When adding UI text: wrap it in `t()` and add
-the ru/ka/es entry to `translations.ts`. Server-generated notification titles (`cron.js`)
-are still English-only.
+the ru/ka/es entry to `translations.ts`.
+
+The language is also saved **per account** (`users.language`, nullable, migration 0005):
+signup sends the device's choice, login and `GET /api/me` return it, and
+`PATCH /api/profile { language }` updates it (Settings → Language). On sign-in and on every
+app launch the account's language wins over the device's; an account with none yet gets the
+device's. The server writes notifications (new-fine alerts, weekly reminders, and their
+pushes) in the owner's language via `server/src/language.js`, which holds the notification
+texts and a copy of `VIOLATION_NAMES` — keep that copy in sync with `mobile/src/i18n.ts`.
+Known fixed server error messages are translated in the app at display time
+(`getErrorMessage` → `t(err.message)`), so keep their English text stable.
 
 ## Mobile app specifics
 

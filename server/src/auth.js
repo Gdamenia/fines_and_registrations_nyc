@@ -1,6 +1,10 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { pool } = require('./db/pool');
+const { normalizeLanguage } = require('./language');
+
+// Columns returned to clients as "the user".
+const USER_COLUMNS = 'id, email, full_name, language';
 
 const JWT_EXPIRES_IN = '30d'; // long-lived: mobile shouldn't need to re-login constantly
 
@@ -17,15 +21,15 @@ function signToken(user) {
   });
 }
 
-async function signup(email, password, fullName = null) {
+async function signup(email, password, fullName = null, language = null) {
   const normalizedEmail = email.trim().toLowerCase();
   const passwordHash = await bcrypt.hash(password, 10);
 
   let result;
   try {
     result = await pool.query(
-      'INSERT INTO users (email, password_hash, full_name) VALUES ($1, $2, $3) RETURNING id, email, full_name',
-      [normalizedEmail, passwordHash, fullName ? fullName.trim() : null]
+      `INSERT INTO users (email, password_hash, full_name, language) VALUES ($1, $2, $3, $4) RETURNING ${USER_COLUMNS}`,
+      [normalizedEmail, passwordHash, fullName ? fullName.trim() : null, normalizeLanguage(language)]
     );
   } catch (err) {
     if (err.code === '23505') {
@@ -45,7 +49,7 @@ async function login(email, password) {
   const normalizedEmail = email.trim().toLowerCase();
 
   const { rows } = await pool.query(
-    'SELECT id, email, full_name, password_hash FROM users WHERE email = $1',
+    `SELECT ${USER_COLUMNS}, password_hash FROM users WHERE email = $1`,
     [normalizedEmail]
   );
   const row = rows[0];
@@ -62,25 +66,55 @@ async function login(email, password) {
     throw err;
   }
 
-  const user = { id: row.id, email: row.email, full_name: row.full_name };
+  const user = { id: row.id, email: row.email, full_name: row.full_name, language: row.language };
   return { user, token: signToken(user) };
 }
 
-async function updateProfile(userId, fullName) {
-  const clean = String(fullName || '').trim();
-  if (!clean) {
-    const err = new Error('Nickname is required.');
+/**
+ * Update the profile fields that were provided: `fullName` (nickname) and/or `language`.
+ * Either can be sent on its own - e.g. the app saves a language change without a nickname.
+ */
+async function updateProfile(userId, { fullName, language } = {}) {
+  const sets = [];
+  const values = [];
+
+  if (fullName !== undefined) {
+    const clean = String(fullName || '').trim();
+    if (!clean) {
+      const err = new Error('Nickname is required.');
+      err.status = 400;
+      throw err;
+    }
+    if (clean.length > 40) {
+      const err = new Error('Nickname must be 40 characters or fewer.');
+      err.status = 400;
+      throw err;
+    }
+    values.push(clean);
+    sets.push(`full_name = $${values.length}`);
+  }
+
+  if (language !== undefined) {
+    const code = normalizeLanguage(language);
+    if (!code) {
+      const err = new Error('Unsupported language.');
+      err.status = 400;
+      throw err;
+    }
+    values.push(code);
+    sets.push(`language = $${values.length}`);
+  }
+
+  if (sets.length === 0) {
+    const err = new Error('Nothing to update.');
     err.status = 400;
     throw err;
   }
-  if (clean.length > 40) {
-    const err = new Error('Nickname must be 40 characters or fewer.');
-    err.status = 400;
-    throw err;
-  }
+
+  values.push(userId);
   const { rows } = await pool.query(
-    'UPDATE users SET full_name = $1 WHERE id = $2 RETURNING id, email, full_name',
-    [clean, userId]
+    `UPDATE users SET ${sets.join(', ')} WHERE id = $${values.length} RETURNING ${USER_COLUMNS}`,
+    values
   );
   if (!rows[0]) {
     const err = new Error('User not found.');
@@ -90,8 +124,13 @@ async function updateProfile(userId, fullName) {
   return rows[0];
 }
 
+async function getUser(userId) {
+  const { rows } = await pool.query(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [userId]);
+  return rows[0] || null;
+}
+
 function verifyToken(token) {
   return jwt.verify(token, getJwtSecret());
 }
 
-module.exports = { signup, login, updateProfile, verifyToken };
+module.exports = { signup, login, updateProfile, getUser, verifyToken };
