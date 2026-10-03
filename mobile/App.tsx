@@ -77,6 +77,10 @@ const INTRO_KEY = 'tixradar:intro-v2';
 const RECENT_LOOKUPS_KEY = 'tixradar:recent-lookups';
 const NOTIFICATION_PREFS_KEY = 'tixradar:notification-prefs';
 const AVATAR_KEY_PREFIX = 'tixradar:avatar:';
+// Tixradar only covers NY-registered vehicles for now (NYC DOF data, no other state
+// APIs wired up), so adding/editing a vehicle offers NY only.
+const SUPPORTED_VEHICLE_STATES = ['NY'];
+
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
 const STATE_NAMES: Record<string, string> = { AL:'Alabama', AK:'Alaska', AZ:'Arizona', AR:'Arkansas', CA:'California', CO:'Colorado', CT:'Connecticut', DE:'Delaware', DC:'District of Columbia', FL:'Florida', GA:'Georgia', HI:'Hawaii', ID:'Idaho', IL:'Illinois', IN:'Indiana', IA:'Iowa', KS:'Kansas', KY:'Kentucky', LA:'Louisiana', ME:'Maine', MD:'Maryland', MA:'Massachusetts', MI:'Michigan', MN:'Minnesota', MS:'Mississippi', MO:'Missouri', MT:'Montana', NE:'Nebraska', NV:'Nevada', NH:'New Hampshire', NJ:'New Jersey', NM:'New Mexico', NY:'New York', NC:'North Carolina', ND:'North Dakota', OH:'Ohio', OK:'Oklahoma', OR:'Oregon', PA:'Pennsylvania', RI:'Rhode Island', SC:'South Carolina', SD:'South Dakota', TN:'Tennessee', TX:'Texas', UT:'Utah', VT:'Vermont', VA:'Virginia', WA:'Washington', WV:'West Virginia', WI:'Wisconsin', WY:'Wyoming' };
 
@@ -195,7 +199,6 @@ export default function App() {
   const [introComplete, setIntroComplete] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>('signin');
   const [session, setSession] = useState<Session | null>(null);
-  const [profileSetupPending, setProfileSetupPending] = useState(false);
   const [route, setCurrentRoute] = useState<Route>({ name: 'main', tab: 'home' });
   const [history, setHistory] = useState<Route[]>([]);
   const [cars, setCars] = useState<CarSummary[]>([]);
@@ -233,7 +236,6 @@ export default function App() {
       if (savedSession) {
         const parsed = JSON.parse(savedSession) as Session;
         setSession(parsed);
-        setProfileSetupPending(!parsed.user.full_name?.trim());
       }
     } catch {
       // A corrupt local cache should never prevent the app from opening.
@@ -296,7 +298,6 @@ export default function App() {
       setCars([]);
       setDetails({});
       setNotifications([]);
-      setProfileSetupPending(false);
     }
     setAuthMode(mode);
   }
@@ -306,31 +307,10 @@ export default function App() {
     setIntroComplete(false);
   }
 
-  async function saveSession(next: Session, requireProfileSetup = false) {
+  async function saveSession(next: Session) {
     demoInitialized.current = false;
     await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(next));
     setSession(next);
-    setProfileSetupPending(requireProfileSetup || !next.user.full_name?.trim());
-    setHistory([]);
-    setCurrentRoute({ name: 'main', tab: 'home' });
-  }
-
-  async function completeInitialProfile(nickname: string, selectedAvatar: number) {
-    if (!session) return;
-    const clean = nickname.trim();
-    if (!clean) throw new Error('Choose a nickname.');
-    if (clean.length > 40) throw new Error('Keep your nickname under 40 characters.');
-    const user = session.demo
-      ? { ...session.user, full_name: clean }
-      : (await updateProfile(session.token, clean)).user;
-    const nextSession: Session = { ...session, user };
-    await Promise.all([
-      AsyncStorage.setItem(SESSION_KEY, JSON.stringify(nextSession)),
-      AsyncStorage.setItem(`${AVATAR_KEY_PREFIX}${nextSession.user.id}`, String(selectedAvatar)),
-    ]);
-    setSession(nextSession);
-    setAvatarIndex(selectedAvatar);
-    setProfileSetupPending(false);
     setHistory([]);
     setCurrentRoute({ name: 'main', tab: 'home' });
   }
@@ -345,7 +325,6 @@ export default function App() {
     setHistory([]);
     setCurrentRoute({ name: 'main', tab: 'home' });
     setAuthMode('signin');
-    setProfileSetupPending(false);
   }
 
   function navigate(next: Route) {
@@ -462,18 +441,8 @@ export default function App() {
       <AuthScreen
         mode={authMode}
         setMode={setAuthMode}
-        onSession={(next, isNewAccount) => void saveSession(next, isNewAccount)}
+        onSession={(next) => void saveSession(next)}
         onBack={() => void returnToIntro()}
-      />
-    );
-  }
-  if (profileSetupPending) {
-    return (
-      <ProfileSetupScreen
-        session={session}
-        initialAvatar={avatarIndex}
-        onComplete={completeInitialProfile}
-        onSignOut={() => void signOut()}
       />
     );
   }
@@ -770,7 +739,7 @@ function AuthScreen({
           <Text style={styles.authSubtitle}>
             {mode === 'signin'
               ? 'Sign in and get straight back to your vehicles.'
-              : 'Start with an account. You’ll choose your nickname and avatar next.'}
+              : 'Create your account and start tracking your vehicles. You can add a nickname and avatar later in Profile.'}
           </Text>
 
           <TouchableOpacity style={styles.socialAuthButton} onPress={() => void social('apple')} disabled={!!socialLoading} activeOpacity={0.84}>
@@ -821,63 +790,6 @@ function AuthScreen({
           <Text style={styles.legalText}>By continuing, you agree to Tixradar’s Terms of Service and Privacy Policy.</Text>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
-  );
-}
-
-function ProfileSetupScreen({
-  session,
-  initialAvatar,
-  onComplete,
-  onSignOut,
-}: {
-  session: Session;
-  initialAvatar: number;
-  onComplete: (nickname: string, avatar: number) => Promise<void>;
-  onSignOut: () => void;
-}) {
-  const [nickname, setNickname] = useState('');
-  const [selectedAvatar, setSelectedAvatar] = useState(initialAvatar);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  async function finish() {
-    const clean = nickname.trim();
-    if (!clean) return setError('Choose a nickname.');
-    setError('');
-    setSaving(true);
-    try {
-      await onComplete(clean, selectedAvatar);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <SafeAreaView style={styles.setupPage}>
-      <StatusBar style="light" />
-      <ScrollView contentContainerStyle={styles.setupContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        <Brand light compact />
-        <View style={styles.setupStepPill}><Text style={styles.setupStepText}>FINAL STEP</Text></View>
-        <Text style={styles.setupTitle}>Make Tixradar yours.</Text>
-        <Text style={styles.setupSubtitle}>Choose how you’ll appear in the app. You can change both anytime in Profile & Settings.</Text>
-
-        <View style={styles.setupPreview}>
-          <Image source={AVATAR_ASSETS[selectedAvatar]} style={styles.setupPreviewAvatar} resizeMode="cover" />
-          <View style={{ flex: 1, minWidth: 0 }}><Text style={styles.setupPreviewName}>{nickname.trim() || 'Your nickname'}</Text><Text style={styles.setupPreviewEmail} numberOfLines={1}>{session.user.email}</Text></View>
-        </View>
-
-        <SectionTitle title="Choose avatar" />
-        <AvatarPicker selected={selectedAvatar} onChange={setSelectedAvatar} />
-        <SectionTitle title="Nickname" />
-        <Field value={nickname} onChangeText={setNickname} placeholder="John Driver" autoCapitalize="words" maxLength={40} />
-        <Text style={styles.setupHint}>This is what you’ll see in the Home header.</Text>
-        {!!error && <Text style={styles.formError}>{error}</Text>}
-        <PrimaryButton title={saving ? 'Finishing setup…' : 'Continue to Tixradar'} hideArrow disabled={saving} onPress={() => void finish()} />
-        <TouchableOpacity style={styles.setupChangeAccount} onPress={onSignOut}><Text style={styles.setupChangeAccountText}>Use a different account</Text></TouchableOpacity>
-      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -1069,7 +981,7 @@ function CarDetailScreen({
   openMain: (tab: MainTab) => void;
   onDelete: (carId: number) => Promise<void>;
 }) {
-  const [tab, setTab] = useState<'overview' | 'fines'>('overview');
+  const [tab, setTab] = useState<'overview' | 'unpaid' | 'paid'>('overview');
   const [showActions, setShowActions] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -1079,7 +991,9 @@ function CarDetailScreen({
   }
   const { car } = detail;
   const reg = detail.registration?.data;
+  // amount_due is NYC's authoritative paid/unpaid signal: 0 = paid/resolved.
   const open = detail.violations.filter((v) => toMoney(v.amount_due) > 0);
+  const paid = detail.violations.filter((v) => toMoney(v.amount_due) === 0);
   const flags = registrationFlags(reg);
 
   async function remove() {
@@ -1115,7 +1029,8 @@ function CarDetailScreen({
         </View>
         <View style={styles.detailTabs}>
           <DetailTabButton label="Overview" active={tab === 'overview'} onPress={() => setTab('overview')} />
-          <DetailTabButton label={`Fines (${open.length})`} active={tab === 'fines'} onPress={() => setTab('fines')} />
+          <DetailTabButton label={`Unpaid (${open.length})`} active={tab === 'unpaid'} onPress={() => setTab('unpaid')} />
+          <DetailTabButton label={`Paid (${paid.length})`} active={tab === 'paid'} onPress={() => setTab('paid')} />
         </View>
 
         {tab === 'overview' ? (
@@ -1138,12 +1053,21 @@ function CarDetailScreen({
           </View>
         ) : null}
 
-        {tab === 'fines' ? (
+        {tab === 'unpaid' ? (
           <View style={{ gap: 10 }}>
             {open.map((stored) => (
               <FineRow key={stored.id} violation={stored.data} onPress={() => setRoute({ name: 'violationDetail', violation: stored.data, carName: car.nickname })} />
             ))}
-            {open.length === 0 ? <EmptyCard iconSource={ICON_FINES} title="No open fines" body="This vehicle is clear. New fines will appear here automatically when Tixradar detects them." /> : null}
+            {open.length === 0 ? <EmptyCard iconSource={ICON_FINES} title="No unpaid fines" body="This vehicle is clear. New fines will appear here automatically when Tixradar detects them." /> : null}
+          </View>
+        ) : null}
+
+        {tab === 'paid' ? (
+          <View style={{ gap: 10 }}>
+            {paid.map((stored) => (
+              <FineRow key={stored.id} violation={stored.data} onPress={() => setRoute({ name: 'violationDetail', violation: stored.data, carName: car.nickname })} />
+            ))}
+            {paid.length === 0 ? <EmptyCard iconSource={ICON_FINES} title="No paid fines" body="Fines that have been paid or resolved with NYC will show up here." /> : null}
           </View>
         ) : null}
       </AppScroll>
@@ -1156,7 +1080,7 @@ function CarDetailScreen({
               <>
                 <Text style={styles.sheetTitle}>{car.nickname}</Text>
                 <Text style={styles.sheetSub}>{car.plate} · {stateName(car.state)}</Text>
-                <ActionSheetRow iconSource={ICON_VEHICLES} title="Edit vehicle" subtitle="Change nickname, plate, state, or VIN" onPress={() => { setShowActions(false); setRoute({ name: 'editVehicle', carId: car.id }); }} />
+                <ActionSheetRow iconSource={ICON_VEHICLES} title="Edit vehicle" subtitle="Change nickname, plate, or VIN" onPress={() => { setShowActions(false); setRoute({ name: 'editVehicle', carId: car.id }); }} />
                 <ActionSheetRow iconSource={ICON_WARNING} title="Remove vehicle" subtitle="Stop tracking this car" destructive onPress={() => setConfirmDelete(true)} />
                 <TouchableOpacity style={styles.sheetCancelButton} onPress={() => setShowActions(false)}><Text style={styles.sheetCancelText}>Cancel</Text></TouchableOpacity>
               </>
@@ -1230,6 +1154,7 @@ function FinesScreen({
 
 function FineRow({ violation, carName, onPress }: { violation: Violation; carName?: string; onPress: () => void }) {
   const due = toMoney(violation.amount_due);
+  const shownAmount = due > 0 ? due : toMoney(violation.payment_amount);
   return (
     <TouchableOpacity style={styles.fineRow} onPress={onPress} activeOpacity={0.85} accessibilityRole="button">
       <View style={[styles.fineTypeIcon, due > 0 ? styles.fineTypeIconOpen : styles.fineTypeIconPaid]}>
@@ -1240,7 +1165,7 @@ function FineRow({ violation, carName, onPress }: { violation: Violation; carNam
         <Text style={styles.fineRowMeta} numberOfLines={1}>#{violation.summons_number}{carName ? ` · ${carName}` : ''}</Text>
         <Text style={styles.fineRowMeta} numberOfLines={1}>{formatIssueDate(violation.issue_date)}{violation.street_name ? ` · ${violation.street_name}` : ''}</Text>
       </View>
-      <View style={styles.fineRight}><Text style={styles.fineRowAmount}>${due.toFixed(2)}</Text><Pill label={due > 0 ? 'Unpaid' : 'Paid'} tone={due > 0 ? 'red' : 'green'} /></View>
+      <View style={styles.fineRight}><Text style={styles.fineRowAmount}>${shownAmount.toFixed(2)}</Text><Pill label={due > 0 ? 'Unpaid' : 'Paid'} tone={due > 0 ? 'red' : 'green'} /></View>
       <Chevron />
     </TouchableOpacity>
   );
@@ -1258,7 +1183,8 @@ function ViolationDetailScreen({ route, setRoute, goBack }: { route: Extract<Rou
           <View style={{ flex: 1, minWidth: 0 }}><Text style={styles.violationHeaderTitle} numberOfLines={2}>{friendlyViolation(v.violation)}</Text><Text style={styles.violationHeaderSub}>Summons #{v.summons_number}</Text></View>
           <Pill label={due > 0 ? 'Unpaid' : 'Paid'} tone={due > 0 ? 'red' : 'green'} />
         </View>
-        <Text style={styles.bigMoney}>${due.toFixed(2)}</Text>
+        <Text style={styles.bigMoney}>${(due > 0 ? due : toMoney(v.payment_amount)).toFixed(2)}</Text>
+        {due === 0 ? <Text style={styles.violationHeaderSub}>Paid to NYC</Text> : null}
       </View>
       <View style={styles.detailList}>
         <DetailLine iconSource={ICON_NOTIFICATION} label="Date" value={formatIssueDate(v.issue_date)} sub={v.violation_time || undefined} />
@@ -1431,7 +1357,6 @@ function AddVehicleScreen({ session, goBack, onCreated }: { session: Session; go
   const [plate, setPlate] = useState('');
   const [state, setState] = useState('NY');
   const [vin, setVin] = useState('');
-  const [vehicleIcon, setVehicleIcon] = useState<VehicleIconKey>('sedan');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -1446,10 +1371,10 @@ function AddVehicleScreen({ session, goBack, onCreated }: { session: Session; go
     setLoading(true);
     try {
       if (session.demo) {
-        const car: CarSummary = { id: Date.now(), nickname: cleanNickname, plate: cleanPlate, state, vin: cleanVin || null, vehicle_icon: vehicleIcon, violation_count: 0, total_amount_due: 0, has_registration: Boolean(cleanVin) };
+        const car: CarSummary = { id: Date.now(), nickname: cleanNickname, plate: cleanPlate, state, vin: cleanVin || null, vehicle_icon: 'sedan', violation_count: 0, total_amount_due: 0, has_registration: Boolean(cleanVin) };
         onCreated(car);
       } else {
-        const result = await createCar(session.token, { nickname: cleanNickname, plate: cleanPlate, state, vin: cleanVin || undefined, vehicle_icon: vehicleIcon });
+        const result = await createCar(session.token, { nickname: cleanNickname, plate: cleanPlate, state, vin: cleanVin || undefined });
         onCreated(result.car);
       }
     } catch (err) { setError(getErrorMessage(err)); } finally { setLoading(false); }
@@ -1459,13 +1384,11 @@ function AddVehicleScreen({ session, goBack, onCreated }: { session: Session; go
     <AppScroll>
       <TopBack onPress={goBack} left="×" />
       <Text style={styles.lookupTitle}>Add a Vehicle</Text>
-      <Text style={styles.lookupSub}>Choose the vehicle shape, then add the plate and optional VIN.</Text>
-      <Label text="Choose Vehicle" />
-      <VehicleIconSelector value={vehicleIcon} onChange={setVehicleIcon} />
+      <Text style={styles.lookupSub}>Add the plate and an optional VIN. NY-registered vehicles only for now.</Text>
       <Label text="Vehicle Nickname" /><Field plain placeholder="My car" value={nickname} onChangeText={setNickname} autoCapitalize="words" maxLength={40} />
       <Text style={styles.helperText}>Something easy to recognize, like Family SUV or Work Car.</Text>
       <Label text="License Plate" /><Field plain placeholder="KZP-7314" value={plate} onChangeText={(v) => setPlate(v.toUpperCase())} autoCapitalize="characters" autoCorrect={false} maxLength={12} />
-      <Label text="State" /><PickerField value={state} onValueChange={setState} values={US_STATES} />
+      <Label text="State" /><PickerField value={state} onValueChange={setState} values={SUPPORTED_VEHICLE_STATES} />
       <Label text="VIN (Optional)" /><Field plain placeholder="5YJ3E1EA7NF324518" value={vin} onChangeText={(v) => setVin(normalizeVin(v))} autoCapitalize="characters" autoCorrect={false} maxLength={17} />
       <Text style={styles.helperText}>VINs are 17 characters. Letters I, O, and Q are not used.</Text>
       {!!error && <Text style={styles.formError}>{error}</Text>}
@@ -1491,7 +1414,6 @@ function EditVehicleScreen({
   const [plate, setPlate] = useState(car?.plate || '');
   const [state, setState] = useState(car?.state || 'NY');
   const [vin, setVin] = useState(car?.vin || '');
-  const [vehicleIcon, setVehicleIcon] = useState<VehicleIconKey>(normalizeVehicleIcon(car?.vehicle_icon));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -1506,7 +1428,7 @@ function EditVehicleScreen({
     if (cleanVin && !isValidVin(cleanVin)) return setError('VIN must be 17 valid characters, or leave it blank.');
     setLoading(true);
     try {
-      await onSave(car.id, { nickname: cleanNickname, plate: cleanPlate, state, vin: cleanVin || undefined, vehicle_icon: vehicleIcon });
+      await onSave(car.id, { nickname: cleanNickname, plate: cleanPlate, state, vin: cleanVin || undefined });
       goBack();
     } catch (err) {
       setError(getErrorMessage(err));
@@ -1518,10 +1440,9 @@ function EditVehicleScreen({
   return (
     <AppScroll>
       <TopBack onPress={goBack} center="Edit Vehicle" />
-      <Label text="Vehicle Shape" /><VehicleIconSelector value={vehicleIcon} onChange={setVehicleIcon} />
       <Label text="Vehicle Nickname" /><Field plain value={nickname} onChangeText={setNickname} autoCapitalize="words" maxLength={40} />
       <Label text="License Plate" /><Field plain value={plate} onChangeText={(v) => setPlate(v.toUpperCase())} autoCapitalize="characters" autoCorrect={false} maxLength={12} />
-      <Label text="State" /><PickerField value={state} onValueChange={setState} values={US_STATES} />
+      <Label text="State" /><PickerField value={state} onValueChange={setState} values={SUPPORTED_VEHICLE_STATES.includes(car.state) ? SUPPORTED_VEHICLE_STATES : [car.state, ...SUPPORTED_VEHICLE_STATES]} />
       <Label text="VIN (Optional)" /><Field plain placeholder="Add VIN" value={vin} onChangeText={(v) => setVin(normalizeVin(v))} autoCapitalize="characters" autoCorrect={false} maxLength={17} />
       <View style={styles.editNotice}><IconImage source={ICON_MORE} size={16} tint={APP_MUTED} /><Text style={styles.editNoticeText}>Changing the plate or state refreshes tracked fines. Changing the VIN refreshes registration data.</Text></View>
       {!!error && <Text style={styles.formError}>{error}</Text>}
@@ -1929,10 +1850,6 @@ function RecentLookup({ plate, state, onPress }: { plate: string; state: string;
 
 function TrustLine({ iconSource, title, body }: { iconSource: number; title: string; body: string }) {
   return <View style={styles.trustLine}><View style={styles.trustIconWrap}><IconImage source={iconSource} size={17} tint={INK} /></View><View style={{ flex: 1 }}><Text style={styles.trustTitle}>{title}</Text><Text style={styles.trustBody}>{body}</Text></View></View>;
-}
-
-function VehicleIconSelector({ value, onChange }: { value: VehicleIconKey; onChange: (value: VehicleIconKey) => void }) {
-  return <View style={styles.vehicleIconSelector}>{VEHICLE_ICON_OPTIONS.map((item) => <TouchableOpacity key={item.key} style={[styles.vehicleIconChoice, value === item.key && styles.vehicleIconChoiceActive]} onPress={() => onChange(item.key)} activeOpacity={0.8} accessibilityRole="button" accessibilityState={{ selected: value === item.key }} accessibilityLabel={item.label}><Image source={VEHICLE_ICON_ASSETS[item.key]} style={styles.vehicleIconChoiceImage} resizeMode="contain" /></TouchableOpacity>)}</View>;
 }
 
 function AvatarPicker({ selected, onChange }: { selected: number; onChange: (index: number) => void }) {
@@ -2415,25 +2332,8 @@ const styles = StyleSheet.create({
   recentIcon: { width: 38, height: 38, borderRadius: 13, backgroundColor: '#F1F4EF', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
   sourceInfoBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, borderRadius: 16, backgroundColor: '#F1F4EF', padding: 13, marginTop: 14 },
   sourceNoteInline: { flex: 1, color: MUTED, fontSize: 10.5, lineHeight: 16 },
-  vehicleIconSelector: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 8 },
-  vehicleIconChoice: { flex: 1, minWidth: 0, height: 56, borderRadius: 15, borderWidth: 1, borderColor: APP_BORDER, backgroundColor: APP_CARD, alignItems: 'center', justifyContent: 'center' },
-  vehicleIconChoiceActive: { borderColor: APP_BLUE, backgroundColor: APP_BLUE_SOFT },
-  vehicleIconChoiceImage: { width: '68%', height: 24 },
   copySummonsButton: { minHeight: 58, borderRadius: 18, backgroundColor: 'transparent', borderWidth: 1, borderColor: APP_BORDER, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, marginTop: 12 },
   copySummonsText: { flex: 1, color: APP_TEXT, fontSize: 13.5, fontWeight: '800', marginRight: 12 },
-  setupPage: { flex: 1, backgroundColor: APP_BG },
-  setupContent: { width: '100%', maxWidth: 520, alignSelf: 'center', paddingHorizontal: 22, paddingTop: 32, paddingBottom: 34 },
-  setupStepPill: { alignSelf: 'flex-start', backgroundColor: APP_BLUE_SOFT, borderWidth: 1, borderColor: '#224867', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, marginTop: 28 },
-  setupStepText: { color: '#8EC7FF', fontSize: 9, fontWeight: '900', letterSpacing: 1.2 },
-  setupTitle: { color: APP_TEXT, fontSize: 34, lineHeight: 38, fontWeight: '900', letterSpacing: -1.35, marginTop: 15 },
-  setupSubtitle: { color: APP_MUTED, fontSize: 14, lineHeight: 21, marginTop: 8, marginBottom: 22 },
-  setupPreview: { minHeight: 90, borderRadius: 22, backgroundColor: APP_CARD, borderWidth: 1, borderColor: APP_BORDER, flexDirection: 'row', alignItems: 'center', padding: 14, marginBottom: 4 },
-  setupPreviewAvatar: { width: 60, height: 60, borderRadius: 20, marginRight: 13, borderWidth: 1, borderColor: '#526273' },
-  setupPreviewName: { color: APP_TEXT, fontSize: 16, fontWeight: '900' },
-  setupPreviewEmail: { color: APP_MUTED, fontSize: 10.5, marginTop: 4 },
-  setupHint: { color: APP_MUTED, fontSize: 10.5, lineHeight: 16, marginTop: 7, marginBottom: 4 },
-  setupChangeAccount: { minHeight: 44, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
-  setupChangeAccountText: { color: APP_MUTED, fontSize: 11.5, fontWeight: '700' },
   profileEditPreview: { minHeight: 88, borderRadius: 22, backgroundColor: APP_CARD, borderWidth: 1, borderColor: APP_BORDER, padding: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   profileEditAvatar: { width: 58, height: 58, borderRadius: 20, marginRight: 13, borderWidth: 1, borderColor: '#526273' },
   profileEditName: { color: APP_TEXT, fontSize: 16, fontWeight: '900' },

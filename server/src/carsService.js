@@ -7,6 +7,10 @@ const { getRegistrationByVin } = require('./dmvRegistration');
  * Dedup key is (car_id, summons_number) — see migrations/0001_init.sql for why that's
  * per-car rather than global.
  *
+ * Existing rows are refreshed, not skipped: a fine that gets paid keeps its summons
+ * number but its amount_due drops to 0, and the app's Unpaid/Paid split (and totals)
+ * read amount_due. Skipping existing rows left paid fines showing as unpaid forever.
+ *
  * @returns {Promise<object[]>} rows that were newly inserted (i.e. genuinely new violations)
  */
 async function fetchAndSaveViolations(carId, plate, state) {
@@ -16,14 +20,20 @@ async function fetchAndSaveViolations(carId, plate, state) {
   for (const v of violations) {
     if (!v.summons_number) continue; // shouldn't happen, but don't let a bad row crash the sweep
 
+    // (xmax = 0) is true only for a freshly inserted row, false for an updated one.
     const { rows } = await pool.query(
       `INSERT INTO violations (car_id, summons_number, amount_due, issue_date, violation, data)
        VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (car_id, summons_number) DO NOTHING
-       RETURNING *`,
+       ON CONFLICT (car_id, summons_number) DO UPDATE SET
+         amount_due = EXCLUDED.amount_due,
+         issue_date = EXCLUDED.issue_date,
+         violation = EXCLUDED.violation,
+         data = EXCLUDED.data
+       RETURNING *, (xmax = 0) AS inserted`,
       [carId, v.summons_number, v.amount_due ?? null, v.issue_date ?? null, v.violation ?? null, v]
     );
-    if (rows[0]) newlyInserted.push(rows[0]);
+    const { inserted, ...row } = rows[0];
+    if (inserted) newlyInserted.push(row);
   }
 
   return newlyInserted;
@@ -166,7 +176,11 @@ async function getCarDetail(carId, userId) {
 
   const [{ rows: violations }, { rows: registrationRows }] = await Promise.all([
     pool.query(
-      'SELECT * FROM violations WHERE car_id = $1 ORDER BY issue_date DESC NULLS LAST, id DESC',
+      // issue_date is stored as Socrata's MM/DD/YYYY text, so sort by the parsed date,
+      // not the string (which would order by month first).
+      `SELECT * FROM violations WHERE car_id = $1
+       ORDER BY CASE WHEN issue_date ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN to_date(issue_date, 'MM/DD/YYYY') END DESC NULLS LAST,
+                id DESC`,
       [carId]
     ),
     pool.query('SELECT * FROM registrations WHERE car_id = $1', [carId]),
