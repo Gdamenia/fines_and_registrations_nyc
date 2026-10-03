@@ -43,6 +43,8 @@ import {
   Violation,
 } from './src/api';
 import { DEMO_CARS, DEMO_DETAILS, DEMO_NOTIFICATIONS, DEMO_SESSION } from './src/demo';
+import { APP_LANGUAGES, getLanguage, getLocale, loadSavedLanguage, saveLanguage, setLanguage, t, type Lang } from './src/strings';
+import { VIOLATION_NAMES } from './src/i18n';
 
 const GREEN = '#8DFF16';
 const GREEN_DARK = '#58C900';
@@ -77,11 +79,11 @@ const INTRO_KEY = 'tixradar:intro-v2';
 const RECENT_LOOKUPS_KEY = 'tixradar:recent-lookups';
 const NOTIFICATION_PREFS_KEY = 'tixradar:notification-prefs';
 const AVATAR_KEY_PREFIX = 'tixradar:avatar:';
-// Tixradar only covers NY-registered vehicles for now (NYC DOF data, no other state
-// APIs wired up), so adding/editing a vehicle offers NY only.
-const SUPPORTED_VEHICLE_STATES = ['NY'];
+// Tixradar only serves NY plates for now (NYC DOF data, no other state APIs wired up),
+// so there is no state picker anywhere: lookups and new vehicles always use NY. Bring a
+// picker back when another state is supported.
+const SERVICE_STATE = 'NY';
 
-const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
 const STATE_NAMES: Record<string, string> = { AL:'Alabama', AK:'Alaska', AZ:'Arizona', AR:'Arkansas', CA:'California', CO:'Colorado', CT:'Connecticut', DE:'Delaware', DC:'District of Columbia', FL:'Florida', GA:'Georgia', HI:'Hawaii', ID:'Idaho', IL:'Illinois', IN:'Indiana', IA:'Iowa', KS:'Kansas', KY:'Kentucky', LA:'Louisiana', ME:'Maine', MD:'Maryland', MA:'Massachusetts', MI:'Michigan', MN:'Minnesota', MS:'Mississippi', MO:'Missouri', MT:'Montana', NE:'Nebraska', NV:'Nevada', NH:'New Hampshire', NJ:'New Jersey', NM:'New Mexico', NY:'New York', NC:'North Carolina', ND:'North Dakota', OH:'Ohio', OK:'Oklahoma', OR:'Oregon', PA:'Pennsylvania', RI:'Rhode Island', SC:'South Carolina', SD:'South Dakota', TN:'Tennessee', TX:'Texas', UT:'Utah', VT:'Vermont', VA:'Virginia', WA:'Washington', WV:'West Virginia', WI:'Wisconsin', WY:'Wyoming' };
 
 const ICON = require('./assets/tixradar-icon.png');
@@ -156,6 +158,7 @@ type Route =
   | { name: 'notifications' }
   | { name: 'settings' }
   | { name: 'profileEdit' }
+  | { name: 'language' }
   | { name: 'offer'; offerId: OfferId }
   | { name: 'vehicleAdded'; car: CarSummary };
 
@@ -196,6 +199,8 @@ const OFFERS: Offer[] = [
 
 export default function App() {
   const [booting, setBooting] = useState(true);
+  // null until the user has picked one: the language screen is the very first screen.
+  const [language, setLanguageState] = useState<Lang | null>(null);
   const [introComplete, setIntroComplete] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>('signin');
   const [session, setSession] = useState<Session | null>(null);
@@ -228,10 +233,12 @@ export default function App() {
 
   async function hydrate() {
     try {
-      const [savedIntro, savedSession] = await Promise.all([
+      const [savedIntro, savedSession, savedLanguage] = await Promise.all([
         AsyncStorage.getItem(INTRO_KEY),
         AsyncStorage.getItem(SESSION_KEY),
+        loadSavedLanguage(),
       ]);
+      setLanguageState(savedLanguage);
       setIntroComplete(savedIntro === '1');
       if (savedSession) {
         const parsed = JSON.parse(savedSession) as Session;
@@ -315,6 +322,12 @@ export default function App() {
     setCurrentRoute({ name: 'main', tab: 'home' });
   }
 
+  async function chooseLanguage(next: Lang) {
+    setLanguage(next);
+    setLanguageState(next);
+    await saveLanguage(next);
+  }
+
   async function signOut() {
     demoInitialized.current = false;
     await AsyncStorage.removeItem(SESSION_KEY);
@@ -372,10 +385,10 @@ export default function App() {
     carId: number,
     input: { nickname: string; plate: string; state: string; vin?: string; vehicle_icon?: string },
   ): Promise<CarSummary> {
-    if (!session) throw new Error('Sign in again to update this vehicle.');
+    if (!session) throw new Error(t('Sign in again to update this vehicle.'));
     if (session.demo) {
       const current = cars.find((car) => car.id === carId);
-      if (!current) throw new Error('Vehicle not found.');
+      if (!current) throw new Error(t('Vehicle not found.'));
       const updated: CarSummary = {
         ...current,
         nickname: input.nickname,
@@ -412,10 +425,10 @@ export default function App() {
   }
 
   async function saveProfileName(fullName: string) {
-    if (!session) throw new Error('Sign in again to update your profile.');
+    if (!session) throw new Error(t('Sign in again to update your profile.'));
     const clean = fullName.trim();
-    if (!clean) throw new Error('Enter a nickname.');
-    if (clean.length > 40) throw new Error('Keep your nickname under 40 characters.');
+    if (!clean) throw new Error(t('Enter a nickname.'));
+    if (clean.length > 40) throw new Error(t('Keep your nickname under 40 characters.'));
 
     const user = session.demo
       ? { ...session.user, full_name: clean }
@@ -425,7 +438,11 @@ export default function App() {
     await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
   }
 
+  // Keep the module-level language (used by t()) in sync before anything renders.
+  setLanguage(language ?? 'en');
+
   if (booting) return <LaunchScreen />;
+  if (!language) return <LanguageSelectScreen onSelect={(next) => void chooseLanguage(next)} />;
   if (!introComplete) {
     return (
       <WelcomeScreen
@@ -507,6 +524,7 @@ export default function App() {
         <NotificationsScreen notifications={notifications} details={details} goBack={goBack} />
       )}
       {route.name === 'settings' && <SettingsScreen session={session} avatarIndex={avatarIndex} setRoute={navigate} goBack={goBack} onSignOut={() => void signOut()} />}
+      {route.name === 'language' && <LanguageSelectScreen selected={language} onBack={goBack} onSelect={(next) => { void chooseLanguage(next); goBack(); }} />}
       {route.name === 'profileEdit' && <ProfileEditScreen session={session} avatarIndex={avatarIndex} onAvatarChange={(index) => void changeAvatar(index)} onSaveName={saveProfileName} goBack={goBack} />}
       {route.name === 'offer' && <OfferDetailScreen offerId={route.offerId} goBack={goBack} />}
       {route.name === 'vehicleAdded' && <VehicleAddedScreen car={route.car} openMain={openMain} setRoute={replaceRoute} />}
@@ -519,9 +537,38 @@ function LaunchScreen() {
     <View style={styles.launch}>
       <Image source={ICON} style={styles.launchIcon} />
       <Brand light centered />
-      <Text style={styles.launchTag}>FINES · REGISTRATION · PEACE OF MIND</Text>
+      <Text style={styles.launchTag}>{t('FINES · REGISTRATION · PEACE OF MIND')}</Text>
       <ActivityIndicator style={{ marginTop: 30 }} color={APP_GREEN} />
     </View>
+  );
+}
+
+/**
+ * First screen of the app (and Settings → Language): the supported languages as
+ * standalone buttons, nothing else. Picking one starts the normal flow in it.
+ */
+function LanguageSelectScreen({ selected, onSelect, onBack }: { selected?: Lang | null; onSelect: (lang: Lang) => void; onBack?: () => void }) {
+  return (
+    <SafeAreaView style={styles.welcomePage}>
+      <StatusBar style="light" />
+      <View style={styles.languageContent}>
+        {onBack ? <View style={styles.languageBack}><TopBack onPress={onBack} /></View> : null}
+        {APP_LANGUAGES.map((item) => (
+          <TouchableOpacity
+            key={item.code}
+            style={[styles.languageButton, selected === item.code && styles.languageButtonActive]}
+            onPress={() => onSelect(item.code)}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityState={{ selected: selected === item.code }}
+            accessibilityLabel={item.name}
+          >
+            <Text style={styles.languageFlag}>{item.flag}</Text>
+            <Text style={styles.languageName}>{item.name}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </SafeAreaView>
   );
 }
 
@@ -536,52 +583,52 @@ function WelcomeScreen({
   onCreateAccount: () => void;
   onSignIn: () => void;
 }) {
-  const firstName = session?.user.full_name?.trim().split(/\s+/)[0] || 'Driver';
+  const firstName = session?.user.full_name?.trim().split(/\s+/)[0] || t('Driver');
   return (
     <SafeAreaView style={styles.welcomePage}>
       <StatusBar style="light" />
       <ScrollView contentContainerStyle={styles.welcomeContent} showsVerticalScrollIndicator={false}>
         <View style={styles.welcomeBrandRow}><Brand light compact /></View>
-        <View style={styles.welcomeEyebrow}><Text style={styles.welcomeEyebrowText}>NYC FINES · REGISTRATION · ALERTS</Text></View>
-        <Text style={styles.welcomeTitle}>Your car, without the surprises.</Text>
-        <Text style={styles.welcomeSubtitle}>Track fines, registration status, and every vehicle you care about from one calm dashboard.</Text>
+        <View style={styles.welcomeEyebrow}><Text style={styles.welcomeEyebrowText}>{t('NYC FINES · REGISTRATION · ALERTS')}</Text></View>
+        <Text style={styles.welcomeTitle}>{t('Your car, without the surprises.')}</Text>
+        <Text style={styles.welcomeSubtitle}>{t('Track fines, registration status, and every vehicle you care about from one calm dashboard.')}</Text>
 
         <View style={styles.welcomeHeroCard}>
           <View style={styles.welcomeHeroGlow} />
           <View style={styles.welcomeHeroTop}>
             <View>
               <Text style={styles.welcomeHeroLabel}>TIXRADAR</Text>
-              <Text style={styles.welcomeHeroHeading}>Know sooner. Drive easier.</Text>
+              <Text style={styles.welcomeHeroHeading}>{t('Know sooner. Drive easier.')}</Text>
             </View>
             <View style={styles.welcomeLivePill}><View style={styles.welcomeLiveDot} /><Text style={styles.welcomeLiveText}>LIVE</Text></View>
           </View>
           <Image source={CAR_SEDAN} style={styles.welcomeCar} resizeMode="contain" />
           <View style={styles.welcomeAlertCard}>
             <View style={styles.welcomeAlertIcon}><IconImage source={ICON_NOTIFICATION} size={17} tint={APP_BLUE} /></View>
-            <View style={{ flex: 1 }}><Text style={styles.welcomeAlertTitle}>Fine alerts</Text><Text style={styles.welcomeAlertSub}>Get notified when something new appears.</Text></View>
+            <View style={{ flex: 1 }}><Text style={styles.welcomeAlertTitle}>{t('Fine alerts')}</Text><Text style={styles.welcomeAlertSub}>{t('Get notified when something new appears.')}</Text></View>
           </View>
         </View>
 
         <View style={styles.welcomeFeatureRow}>
-          <WelcomeFeature icon={ICON_OUTSTANDING} title="Balances" />
-          <WelcomeFeature icon={ICON_VEHICLES} title="Vehicles" />
-          <WelcomeFeature icon={ICON_REGISTRATION_DETAIL} title="Registration" />
+          <WelcomeFeature icon={ICON_OUTSTANDING} title={t('Balances')} />
+          <WelcomeFeature icon={ICON_VEHICLES} title={t('Vehicles')} />
+          <WelcomeFeature icon={ICON_REGISTRATION_DETAIL} title={t('Registration')} />
         </View>
       </ScrollView>
       <View style={styles.welcomeActions}>
         {session ? (
           <>
-            <PrimaryButton title={`Continue as ${firstName}`} hideArrow onPress={onContinue} />
-            <TouchableOpacity style={styles.welcomeSecondary} onPress={onCreateAccount}><Text style={styles.welcomeSecondaryText}>Create a new account</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.welcomeTextButton} onPress={onSignIn}><Text style={styles.welcomeTextButtonText}>Sign in with another account</Text></TouchableOpacity>
+            <PrimaryButton title={t('Continue as {name}', { name: firstName })} hideArrow onPress={onContinue} />
+            <TouchableOpacity style={styles.welcomeSecondary} onPress={onCreateAccount}><Text style={styles.welcomeSecondaryText}>{t('Create a new account')}</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.welcomeTextButton} onPress={onSignIn}><Text style={styles.welcomeTextButtonText}>{t('Sign in with another account')}</Text></TouchableOpacity>
           </>
         ) : (
           <>
-            <PrimaryButton title="Create account" hideArrow onPress={onCreateAccount} />
-            <TouchableOpacity style={styles.welcomeSecondary} onPress={onSignIn}><Text style={styles.welcomeSecondaryText}>I already have an account</Text></TouchableOpacity>
+            <PrimaryButton title={t('Create account')} hideArrow onPress={onCreateAccount} />
+            <TouchableOpacity style={styles.welcomeSecondary} onPress={onSignIn}><Text style={styles.welcomeSecondaryText}>{t('I already have an account')}</Text></TouchableOpacity>
           </>
         )}
-        <Text style={styles.welcomeLegal}>By continuing, you agree to Tixradar’s Terms of Service and Privacy Policy.</Text>
+        <Text style={styles.welcomeLegal}>{t('By continuing, you agree to Tixradar’s Terms of Service and Privacy Policy.')}</Text>
       </View>
     </SafeAreaView>
   );
@@ -597,13 +644,13 @@ function FineIllustration() {
       <View style={styles.mapGrid} />
       <View style={styles.fineCardLarge}>
         <View style={styles.iconBubble}><IconImage source={ICON_WARNING} size={20} tint={INK} /></View>
-        <Text style={styles.smallCaps}>NYC PARKING VIOLATION</Text>
+        <Text style={styles.smallCaps}>{t('NYC PARKING VIOLATION')}</Text>
         <Text style={styles.fineAmount}>$50.00</Text>
-        <Text style={styles.fineMeta}>Camera Violation</Text>
+        <Text style={styles.fineMeta}>{t('Camera Violation')}</Text>
         <Text style={styles.fineMeta}>E 14th St & 3rd Ave</Text>
-        <Pill label="Found" tone="green" />
+        <Pill label={t('Found')} tone="green" />
       </View>
-      <Text style={styles.handNote}>Know sooner.\nDo more.</Text>
+      <Text style={styles.handNote}>{t('Know sooner.\nDo more.')}</Text>
     </View>
   );
 }
@@ -615,8 +662,8 @@ function VehiclesIllustration() {
       <VehiclePreview image={CAR_SUV} name="2020 Honda CR-V" plate="LFM-2901" />
       <VehiclePreview image={CAR_DARK} name="2018 BMW 330i" plate="HXT-8840" />
       <View style={styles.registrationPreview}>
-        <View><Text style={styles.previewLabel}>Registration</Text><Text style={styles.previewSub}>Expires Jan 15, 2027</Text></View>
-        <Pill label="Active" tone="green" />
+        <View><Text style={styles.previewLabel}>{t('Registration')}</Text><Text style={styles.previewSub}>{t('Expires {date}', { date: 'Jan 15, 2027' })}</Text></View>
+        <Pill label={t('Active')} tone="green" />
       </View>
     </View>
   );
@@ -635,10 +682,10 @@ function VehiclePreview({ image, name, plate, active }: { image: number; name: s
 function AlertsIllustration() {
   return (
     <View style={{ width: '100%', gap: 12 }}>
-      <NotificationPreview iconSource={ICON_WARNING} title="New Fine Detected" body="$50 camera violation on KZP-7314." time="2m" tone="red" />
-      <NotificationPreview iconSource={ICON_NOTIFICATION} title="Registration Reminder" body="Your registration expires in 30 days." time="1d" tone="green" />
-      <NotificationPreview iconSource={ICON_OUTSTANDING} title="Pay through CityPay" body="Copy the summons and open the official NYC payment site." time="" tone="dark" />
-      <Text style={styles.handNote}>Less stress.\nMore driving.</Text>
+      <NotificationPreview iconSource={ICON_WARNING} title={t('New Fine Detected')} body={t('$50 camera violation on KZP-7314.')} time="2m" tone="red" />
+      <NotificationPreview iconSource={ICON_NOTIFICATION} title={t('Registration Reminder')} body={t('Your registration expires in 30 days.')} time="1d" tone="green" />
+      <NotificationPreview iconSource={ICON_OUTSTANDING} title={t('Pay through CityPay')} body={t('Copy the summons and open the official NYC payment site.')} time="" tone="dark" />
+      <Text style={styles.handNote}>{t('Less stress.\nMore driving.')}</Text>
     </View>
   );
 }
@@ -676,9 +723,9 @@ function AuthScreen({
   async function submit() {
     setError('');
     const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail || !password) return setError('Enter your email and password.');
-    if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) return setError('Enter a valid email address.');
-    if (mode === 'signup' && password.length < 8) return setError('Use at least 8 characters for your password.');
+    if (!cleanEmail || !password) return setError(t('Enter your email and password.'));
+    if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) return setError(t('Enter a valid email address.'));
+    if (mode === 'signup' && password.length < 8) return setError(t('Use at least 8 characters for your password.'));
     setLoading(true);
     try {
       const next = mode === 'signin' ? await login(cleanEmail, password) : await signup(cleanEmail, password);
@@ -713,8 +760,8 @@ function AuthScreen({
         return;
       }
       Alert.alert(
-        `${provider === 'google' ? 'Google' : 'Apple'} Sign In`,
-        'The account flow is ready. Add the production OAuth credentials and token verification before release.',
+        t('{provider} Sign In', { provider: provider === 'google' ? 'Google' : 'Apple' }),
+        t('The account flow is ready. Add the production OAuth credentials and token verification before release.'),
       );
     } finally {
       setSocialLoading(null);
@@ -726,68 +773,68 @@ function AuthScreen({
       <StatusBar style="light" />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.authContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          <TouchableOpacity style={styles.authBackButton} onPress={onBack} accessibilityRole="button" accessibilityLabel="Go back">
+          <TouchableOpacity style={styles.authBackButton} onPress={onBack} accessibilityRole="button" accessibilityLabel={t('Go back')}>
             <IconImage source={ICON_ARROW} size={19} tint={APP_TEXT} style={{ transform: [{ rotate: '180deg' }] }} />
           </TouchableOpacity>
           <Brand light compact />
           <View style={styles.authModeSwitch}>
-            <TouchableOpacity style={[styles.authModeOption, mode === 'signin' && styles.authModeOptionActive]} onPress={() => setMode('signin')}><Text style={[styles.authModeText, mode === 'signin' && styles.authModeTextActive]}>Sign in</Text></TouchableOpacity>
-            <TouchableOpacity style={[styles.authModeOption, mode === 'signup' && styles.authModeOptionActive]} onPress={() => setMode('signup')}><Text style={[styles.authModeText, mode === 'signup' && styles.authModeTextActive]}>Create account</Text></TouchableOpacity>
+            <TouchableOpacity style={[styles.authModeOption, mode === 'signin' && styles.authModeOptionActive]} onPress={() => setMode('signin')}><Text style={[styles.authModeText, mode === 'signin' && styles.authModeTextActive]}>{t('Sign in')}</Text></TouchableOpacity>
+            <TouchableOpacity style={[styles.authModeOption, mode === 'signup' && styles.authModeOptionActive]} onPress={() => setMode('signup')}><Text style={[styles.authModeText, mode === 'signup' && styles.authModeTextActive]}>{t('Create account')}</Text></TouchableOpacity>
           </View>
 
-          <Text style={styles.authTitle}>{mode === 'signin' ? 'Welcome back' : 'Create your account'}</Text>
+          <Text style={styles.authTitle}>{mode === 'signin' ? t('Welcome back') : t('Create your account')}</Text>
           <Text style={styles.authSubtitle}>
             {mode === 'signin'
-              ? 'Sign in and get straight back to your vehicles.'
-              : 'Create your account and start tracking your vehicles. You can add a nickname and avatar later in Profile.'}
+              ? t('Sign in and get straight back to your vehicles.')
+              : t('Create your account and start tracking your vehicles. You can add a nickname and avatar later in Profile.')}
           </Text>
 
           <TouchableOpacity style={styles.socialAuthButton} onPress={() => void social('apple')} disabled={!!socialLoading} activeOpacity={0.84}>
-            <Text style={styles.appleMark}></Text><Text style={styles.socialAuthText}>{socialLoading === 'apple' ? 'Connecting…' : `Continue with Apple`}</Text>
+            <Text style={styles.appleMark}></Text><Text style={styles.socialAuthText}>{socialLoading === 'apple' ? t('Connecting…') : t('Continue with Apple')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.socialAuthButton} onPress={() => void social('google')} disabled={!!socialLoading} activeOpacity={0.84}>
-            <View style={styles.googleMark}><Text style={styles.googleMarkText}>G</Text></View><Text style={styles.socialAuthText}>{socialLoading === 'google' ? 'Connecting…' : `Continue with Google`}</Text>
+            <View style={styles.googleMark}><Text style={styles.googleMarkText}>G</Text></View><Text style={styles.socialAuthText}>{socialLoading === 'google' ? t('Connecting…') : t('Continue with Google')}</Text>
           </TouchableOpacity>
 
-          <View style={styles.authDivider}><View style={styles.authDividerLine} /><Text style={styles.authDividerText}>or continue with email</Text><View style={styles.authDividerLine} /></View>
+          <View style={styles.authDivider}><View style={styles.authDividerLine} /><Text style={styles.authDividerText}>{t('or continue with email')}</Text><View style={styles.authDividerLine} /></View>
 
-          <Label text="Email Address" />
+          <Label text={t('Email Address')} />
           <Field plain placeholder="you@example.com" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} textContentType="emailAddress" />
-          <Label text="Password" />
+          <Label text={t('Password')} />
           <Field
             plain
-            placeholder={mode === 'signup' ? 'Create a password' : 'Enter your password'}
+            placeholder={mode === 'signup' ? t('Create a password') : t('Enter your password')}
             value={password}
             onChangeText={setPassword}
             secureTextEntry={!showPassword}
             textContentType={mode === 'signup' ? 'newPassword' : 'password'}
-            right={<TouchableOpacity onPress={() => setShowPassword((v) => !v)} hitSlop={8}><Text style={styles.eyeText}>{showPassword ? 'Hide' : 'Show'}</Text></TouchableOpacity>}
+            right={<TouchableOpacity onPress={() => setShowPassword((v) => !v)} hitSlop={8}><Text style={styles.eyeText}>{showPassword ? t('Hide') : t('Show')}</Text></TouchableOpacity>}
           />
 
           {mode === 'signup' ? (
             <View style={styles.passwordRules}>
-              <Rule ok={password.length >= 8} text="At least 8 characters" />
-              <Rule ok={/[A-Za-z]/.test(password) && /\d/.test(password)} text="One letter and one number" />
-              <Rule ok={/[^A-Za-z0-9]/.test(password)} text="One special character" />
+              <Rule ok={password.length >= 8} text={t('At least 8 characters')} />
+              <Rule ok={/[A-Za-z]/.test(password) && /\d/.test(password)} text={t('One letter and one number')} />
+              <Rule ok={/[^A-Za-z0-9]/.test(password)} text={t('One special character')} />
             </View>
-          ) : <Text style={styles.sessionNote}>You’ll stay signed in on this device until you sign out.</Text>}
+          ) : <Text style={styles.sessionNote}>{t('You’ll stay signed in on this device until you sign out.')}</Text>}
 
           {!!error && <Text style={styles.formError}>{error}</Text>}
-          <PrimaryButton title={loading ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'} hideArrow onPress={() => void submit()} disabled={loading || !!socialLoading} />
+          <PrimaryButton title={loading ? t('Please wait…') : mode === 'signin' ? t('Sign in') : t('Create account')} hideArrow onPress={() => void submit()} disabled={loading || !!socialLoading} />
 
           {mode === 'signin' && Platform.OS === 'web' ? (
             <TouchableOpacity style={styles.demoButton} onPress={() => onSession(DEMO_SESSION, false)}>
-              <Text style={styles.demoButtonText}>Preview the full app in demo mode</Text>
+              <Text style={styles.demoButtonText}>{t('Preview the full app in demo mode')}</Text>
             </TouchableOpacity>
           ) : null}
 
           <TouchableOpacity style={styles.authSwitch} onPress={() => setMode(mode === 'signin' ? 'signup' : 'signin')}>
             <Text style={styles.authSwitchText}>
-              {mode === 'signin' ? "New to Tixradar? " : 'Already registered? '}
-              <Text style={styles.linkText}>{mode === 'signin' ? 'Create account' : 'Sign in'}</Text>
+              {mode === 'signin' ? "New to Tixradar? " : t('Already registered? ')}
+              <Text style={styles.linkText}>{mode === 'signin' ? t('Create account') : t('Sign in')}</Text>
             </Text>
           </TouchableOpacity>
-          <Text style={styles.legalText}>By continuing, you agree to Tixradar’s Terms of Service and Privacy Policy.</Text>
+          <Text style={styles.legalText}>{t('By continuing, you agree to Tixradar’s Terms of Service and Privacy Policy.')}</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -825,7 +872,7 @@ function HomeScreen({
   const allViolations = useMemo(() => flattenViolations(details), [details]);
   const open = allViolations.filter((x) => toMoney(x.violation.amount_due) > 0);
   const total = open.reduce((sum, x) => sum + toMoney(x.violation.amount_due), 0);
-  const name = session.user.full_name?.split(' ')[0] || session.user.email.split('@')[0] || 'Driver';
+  const name = session.user.full_name?.split(' ')[0] || session.user.email.split('@')[0] || t('Driver');
   const hasDebt = total > 0;
   const hasOpenFines = open.length > 0;
 
@@ -838,28 +885,28 @@ function HomeScreen({
     <View style={styles.screenFlex}>
       <AppScroll refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void doRefresh()} tintColor={APP_BLUE} />}>
         <View style={styles.homeHeader}>
-          <TouchableOpacity style={styles.homeIdentity} onPress={() => setRoute({ name: 'settings' })} activeOpacity={0.82} accessibilityRole="button" accessibilityLabel="Open profile and settings">
+          <TouchableOpacity style={styles.homeIdentity} onPress={() => setRoute({ name: 'settings' })} activeOpacity={0.82} accessibilityRole="button" accessibilityLabel={t('Open profile and settings')}>
             <Image source={avatarSource} style={styles.homeAvatarImage} resizeMode="cover" />
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.homeHello} numberOfLines={1}>Hey! {name}</Text>
-              <Text style={styles.homePrompt} numberOfLines={1}>Ready to stay ahead today?</Text>
+              <Text style={styles.homeHello} numberOfLines={1}>{t('Hey! {name}', { name })}</Text>
+              <Text style={styles.homePrompt} numberOfLines={1}>{t('Ready to stay ahead today?')}</Text>
             </View>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.homeBell} onPress={() => setRoute({ name: 'notifications' })} accessibilityRole="button" accessibilityLabel="Open notifications">
+          <TouchableOpacity style={styles.homeBell} onPress={() => setRoute({ name: 'notifications' })} accessibilityRole="button" accessibilityLabel={t('Open notifications')}>
             <IconImage source={ICON_NOTIFICATION} size={21} tint={APP_TEXT} />
             {notifications.length > 0 ? <View style={styles.notificationBadgeDot} /> : null}
           </TouchableOpacity>
         </View>
 
         <View style={styles.homeMetricRow}>
-          <DashboardMetricCard iconSource={ICON_OUTSTANDING} label="Fine balance" value={hasDebt ? `-$${formatCompactMoney(total)}` : '$0'} tone={hasDebt ? 'red' : 'green'} />
-          <DashboardMetricCard iconSource={ICON_WARNING} label="Open fines" value={String(open.length)} tone={hasOpenFines ? 'red' : 'green'} />
-          <DashboardMetricCard iconSource={ICON_VEHICLES} label="Vehicles" value={String(cars.length)} tone="blue" />
+          <DashboardMetricCard iconSource={ICON_OUTSTANDING} label={t('Fine balance')} value={hasDebt ? `-$${formatCompactMoney(total)}` : '$0'} tone={hasDebt ? 'red' : 'green'} />
+          <DashboardMetricCard iconSource={ICON_WARNING} label={t('Open fines')} value={String(open.length)} tone={hasOpenFines ? 'red' : 'green'} />
+          <DashboardMetricCard iconSource={ICON_VEHICLES} label={t('Vehicles')} value={String(cars.length)} tone="blue" />
         </View>
 
-        <SectionTitle title="My Vehicles" />
+        <SectionTitle title={t('My Vehicles')} />
         {loadingData && cars.length === 0 ? (
-          <View style={styles.loadingCard}><ActivityIndicator color={APP_BLUE} /><Text style={styles.mutedText}>Loading your vehicles…</Text></View>
+          <View style={styles.loadingCard}><ActivityIndicator color={APP_BLUE} /><Text style={styles.mutedText}>{t('Loading your vehicles…')}</Text></View>
         ) : (
           <View style={{ gap: 12 }}>
             {cars.map((car) => <VehicleCard key={car.id} car={car} detail={details[car.id]} onPress={() => setRoute({ name: 'carDetail', carId: car.id })} />)}
@@ -869,8 +916,8 @@ function HomeScreen({
         <TouchableOpacity style={styles.addVehicleDashed} onPress={() => setRoute({ name: 'addVehicle' })} activeOpacity={0.82}>
           <View style={styles.addSmallCircle}><Text style={styles.addSmallText}>＋</Text></View>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={styles.addVehicleTitle}>{cars.length ? 'Add Another Vehicle' : 'Add Your First Vehicle'}</Text>
-            <Text style={styles.addVehicleSub}>Track another plate and VIN</Text>
+            <Text style={styles.addVehicleTitle}>{cars.length ? t('Add Another Vehicle') : t('Add Your First Vehicle')}</Text>
+            <Text style={styles.addVehicleSub}>{t('Track another plate and VIN')}</Text>
           </View>
         </TouchableOpacity>
       </AppScroll>
@@ -909,31 +956,31 @@ function VehiclesScreen({
     <View style={styles.screenFlex}>
       <AppScroll bottomInset refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} tintColor={GREEN_DARK} />}>
         <Header
-          title="My Vehicles"
-          subtitle="Your saved cars, fines, and registration status."
+          title={t('My Vehicles')}
+          subtitle={t('Your saved cars, fines, and registration status.')}
           right={
-            <TouchableOpacity style={styles.addCircle} onPress={() => setRoute({ name: 'addVehicle' })} accessibilityRole="button" accessibilityLabel="Add vehicle">
+            <TouchableOpacity style={styles.addCircle} onPress={() => setRoute({ name: 'addVehicle' })} accessibilityRole="button" accessibilityLabel={t('Add vehicle')}>
               <Text style={styles.addCircleText}>＋</Text>
             </TouchableOpacity>
           }
         />
         <View style={styles.segmentRow}>
-          <Segment label={`All (${cars.length})`} active={filter === 'all'} onPress={() => setFilter('all')} />
-          <Segment label="Clear" active={filter === 'active'} onPress={() => setFilter('active')} />
-          <Segment label="Attention" active={filter === 'attention'} onPress={() => setFilter('attention')} />
+          <Segment label={t('All ({count})', { count: cars.length })} active={filter === 'all'} onPress={() => setFilter('all')} />
+          <Segment label={t('Clear')} active={filter === 'active'} onPress={() => setFilter('active')} />
+          <Segment label={t('Attention')} active={filter === 'attention'} onPress={() => setFilter('attention')} />
         </View>
         <View style={{ gap: 12 }}>
           {filtered.map((car) => <VehicleCard key={car.id} car={car} detail={details[car.id]} onPress={() => setRoute({ name: 'carDetail', carId: car.id })} />)}
         </View>
         {cars.length === 0 ? (
-          <EmptyCard iconSource={ICON_VEHICLES} title="Your garage is empty" body="Add a vehicle to start tracking fines and registration." button="Add Vehicle" onPress={() => setRoute({ name: 'addVehicle' })} />
+          <EmptyCard iconSource={ICON_VEHICLES} title={t('Your garage is empty')} body={t('Add a vehicle to start tracking fines and registration.')} button={t('Add Vehicle')} onPress={() => setRoute({ name: 'addVehicle' })} />
         ) : filtered.length === 0 ? (
-          <EmptyCard iconSource={filter === 'attention' ? ICON_WARNING : ICON_VEHICLES} title={filter === 'attention' ? 'Nothing needs attention' : 'No vehicles in this filter'} body={filter === 'attention' ? 'Your saved vehicles currently look clear.' : 'Try another filter to see your vehicles.'} />
+          <EmptyCard iconSource={filter === 'attention' ? ICON_WARNING : ICON_VEHICLES} title={filter === 'attention' ? t('Nothing needs attention') : t('No vehicles in this filter')} body={filter === 'attention' ? t('Your saved vehicles currently look clear.') : t('Try another filter to see your vehicles.')} />
         ) : null}
         {cars.length > 0 ? (
           <TouchableOpacity style={styles.addVehicleDashed} onPress={() => setRoute({ name: 'addVehicle' })}>
             <View style={styles.addSmallCircle}><Text style={styles.addSmallText}>＋</Text></View>
-            <View><Text style={styles.addVehicleTitle}>Add Another Vehicle</Text><Text style={styles.addVehicleSub}>Track another plate and VIN</Text></View>
+            <View><Text style={styles.addVehicleTitle}>{t('Add Another Vehicle')}</Text><Text style={styles.addVehicleSub}>{t('Track another plate and VIN')}</Text></View>
           </TouchableOpacity>
         ) : null}
       </AppScroll>
@@ -945,9 +992,9 @@ function VehiclesScreen({
 function VehicleCard({ car, detail, onPress }: { car: CarSummary; detail?: CarDetailResponse; onPress: () => void }) {
   const open = detail ? carOpenCount(detail) : Number(car.violation_count || 0);
   const flags = registrationFlags(detail?.registration?.data);
-  const regLabel = flags.length ? 'Registration needs attention' : car.has_registration ? 'Registration active' : 'VIN not added';
+  const regLabel = flags.length ? t('Registration needs attention') : car.has_registration ? t('Registration active') : t('VIN not added');
   return (
-    <TouchableOpacity style={styles.vehicleCard} onPress={onPress} activeOpacity={0.86} accessibilityRole="button" accessibilityLabel={`Open ${car.nickname}`}>
+    <TouchableOpacity style={styles.vehicleCard} onPress={onPress} activeOpacity={0.86} accessibilityRole="button" accessibilityLabel={t('Open {name}', { name: car.nickname })}>
       <View style={styles.vehicleCardImageWrap}><Image source={carImageForCar(car)} style={styles.vehicleCardImage} resizeMode="contain" /></View>
       <View style={{ flex: 1 }}>
         <Text style={styles.vehicleCardTitle} numberOfLines={1}>{car.nickname}</Text>
@@ -958,7 +1005,7 @@ function VehicleCard({ car, detail, onPress }: { car: CarSummary; detail?: CarDe
         </View>
         <View style={[styles.vehicleFineBadge, open > 0 ? styles.vehicleFineBadgeOpen : styles.vehicleFineBadgeClear]}>
           <IconImage source={open > 0 ? ICON_WARNING : ICON_FINES} size={12} tint={open > 0 ? APP_RED : APP_GREEN} />
-          <Text style={[styles.vehicleFineBadgeText, open > 0 && { color: APP_RED }]}>{open > 0 ? `${open} open fine${open > 1 ? 's' : ''}` : 'No open fines'}</Text>
+          <Text style={[styles.vehicleFineBadgeText, open > 0 && { color: APP_RED }]}>{open > 0 ? (open === 1 ? t('1 open fine') : t('{count} open fines', { count: open })) : t('No open fines')}</Text>
         </View>
       </View>
       <Chevron />
@@ -987,7 +1034,7 @@ function CarDetailScreen({
   const [deleting, setDeleting] = useState(false);
   const detail = details[carId];
   if (!detail) {
-    return <CenteredState title="Vehicle unavailable" body="Refresh your garage and try again." onBack={goBack} />;
+    return <CenteredState title={t('Vehicle unavailable')} body={t('Refresh your garage and try again.')} onBack={goBack} />;
   }
   const { car } = detail;
   const reg = detail.registration?.data;
@@ -1022,33 +1069,33 @@ function CarDetailScreen({
         <View style={styles.vehicleDetailSummary}>
           <View style={styles.vehicleDetailImageBox}><Image source={carImageForCar(car)} style={styles.vehicleDetailImage} resizeMode="contain" /></View>
           <View style={styles.vehicleDetailMeta}>
-            <Pill label={flags.length ? 'Attention' : reg ? 'Active' : 'Saved'} tone={flags.length ? 'amber' : 'green'} />
+            <Pill label={flags.length ? t('Attention') : reg ? t('Active') : t('Saved')} tone={flags.length ? 'amber' : 'green'} />
             <Text style={styles.detailTitle} numberOfLines={2}>{vehicleDisplayName(detail)}</Text>
             <Text style={styles.detailPlate}>{car.plate}</Text>
           </View>
         </View>
         <View style={styles.detailTabs}>
-          <DetailTabButton label="Overview" active={tab === 'overview'} onPress={() => setTab('overview')} />
-          <DetailTabButton label={`Unpaid (${open.length})`} active={tab === 'unpaid'} onPress={() => setTab('unpaid')} />
-          <DetailTabButton label={`Paid (${paid.length})`} active={tab === 'paid'} onPress={() => setTab('paid')} />
+          <DetailTabButton label={t('Overview')} active={tab === 'overview'} onPress={() => setTab('overview')} />
+          <DetailTabButton label={t('Unpaid ({count})', { count: open.length })} active={tab === 'unpaid'} onPress={() => setTab('unpaid')} />
+          <DetailTabButton label={t('Paid ({count})', { count: paid.length })} active={tab === 'paid'} onPress={() => setTab('paid')} />
         </View>
 
         {tab === 'overview' ? (
           <View style={styles.overviewStack}>
-            <InfoRow iconSource={ICON_PLATE_DETAIL} label="License Plate" value={`${car.plate} · ${stateName(car.state)}`} />
+            <InfoRow iconSource={ICON_PLATE_DETAIL} label={t('License Plate')} value={`${car.plate} · ${stateName(car.state)}`} />
             <InfoRow
               iconSource={ICON_REGISTRATION_DETAIL}
-              label="Registration Status"
-              value={flags.length ? 'Needs attention' : reg ? 'Active' : car.vin ? 'No public record' : 'VIN not added'}
+              label={t('Registration Status')}
+              value={flags.length ? t('Needs attention') : reg ? t('Active') : car.vin ? t('No public record') : t('VIN not added')}
               accent={!flags.length && !!reg}
-              helper={reg?.reg_expiration_date ? `Expires ${formatDate(reg.reg_expiration_date)}` : undefined}
+              helper={reg?.reg_expiration_date ? t('Expires {date}', { date: formatDate(reg.reg_expiration_date) }) : undefined}
             />
             <InfoRow
               iconSource={ICON_VIN}
-              label="VIN"
-              value={car.vin || 'Not added'}
+              label={t('VIN')}
+              value={car.vin || t('Not added')}
               trailing={car.vin ? 'copy' : undefined}
-              onTrailingPress={car.vin ? () => void copyText(car.vin || '', 'VIN copied') : undefined}
+              onTrailingPress={car.vin ? () => void copyText(car.vin || '', t('VIN copied')) : undefined}
             />
           </View>
         ) : null}
@@ -1058,7 +1105,7 @@ function CarDetailScreen({
             {open.map((stored) => (
               <FineRow key={stored.id} violation={stored.data} onPress={() => setRoute({ name: 'violationDetail', violation: stored.data, carName: car.nickname })} />
             ))}
-            {open.length === 0 ? <EmptyCard iconSource={ICON_FINES} title="No unpaid fines" body="This vehicle is clear. New fines will appear here automatically when Tixradar detects them." /> : null}
+            {open.length === 0 ? <EmptyCard iconSource={ICON_FINES} title={t('No unpaid fines')} body={t('This vehicle is clear. New fines will appear here automatically when Tixradar detects them.')} /> : null}
           </View>
         ) : null}
 
@@ -1067,7 +1114,7 @@ function CarDetailScreen({
             {paid.map((stored) => (
               <FineRow key={stored.id} violation={stored.data} onPress={() => setRoute({ name: 'violationDetail', violation: stored.data, carName: car.nickname })} />
             ))}
-            {paid.length === 0 ? <EmptyCard iconSource={ICON_FINES} title="No paid fines" body="Fines that have been paid or resolved with NYC will show up here." /> : null}
+            {paid.length === 0 ? <EmptyCard iconSource={ICON_FINES} title={t('No paid fines')} body={t('Fines that have been paid or resolved with NYC will show up here.')} /> : null}
           </View>
         ) : null}
       </AppScroll>
@@ -1080,19 +1127,19 @@ function CarDetailScreen({
               <>
                 <Text style={styles.sheetTitle}>{car.nickname}</Text>
                 <Text style={styles.sheetSub}>{car.plate} · {stateName(car.state)}</Text>
-                <ActionSheetRow iconSource={ICON_VEHICLES} title="Edit vehicle" subtitle="Change nickname, plate, or VIN" onPress={() => { setShowActions(false); setRoute({ name: 'editVehicle', carId: car.id }); }} />
-                <ActionSheetRow iconSource={ICON_WARNING} title="Remove vehicle" subtitle="Stop tracking this car" destructive onPress={() => setConfirmDelete(true)} />
-                <TouchableOpacity style={styles.sheetCancelButton} onPress={() => setShowActions(false)}><Text style={styles.sheetCancelText}>Cancel</Text></TouchableOpacity>
+                <ActionSheetRow iconSource={ICON_VEHICLES} title={t('Edit vehicle')} subtitle={t('Change nickname, plate, or VIN')} onPress={() => { setShowActions(false); setRoute({ name: 'editVehicle', carId: car.id }); }} />
+                <ActionSheetRow iconSource={ICON_WARNING} title={t('Remove vehicle')} subtitle={t('Stop tracking this car')} destructive onPress={() => setConfirmDelete(true)} />
+                <TouchableOpacity style={styles.sheetCancelButton} onPress={() => setShowActions(false)}><Text style={styles.sheetCancelText}>{t('Cancel')}</Text></TouchableOpacity>
               </>
             ) : (
               <>
                 <View style={styles.deleteWarningIcon}><IconImage source={ICON_WARNING} size={24} tint={APP_RED} /></View>
-                <Text style={styles.sheetTitle}>Remove {car.nickname}?</Text>
-                <Text style={styles.sheetSub}>This removes the vehicle and its saved tracking data from your Tixradar account. This can’t be undone.</Text>
+                <Text style={styles.sheetTitle}>{t('Remove {name}?', { name: car.nickname })}</Text>
+                <Text style={styles.sheetSub}>{t('This removes the vehicle and its saved tracking data from your Tixradar account. This can’t be undone.')}</Text>
                 <TouchableOpacity style={[styles.destructiveButton, deleting && { opacity: 0.6 }]} disabled={deleting} onPress={() => void remove()}>
-                  {deleting ? <ActivityIndicator color="#fff" /> : <Text style={styles.destructiveButtonText}>Remove Vehicle</Text>}
+                  {deleting ? <ActivityIndicator color="#fff" /> : <Text style={styles.destructiveButtonText}>{t('Remove Vehicle')}</Text>}
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.sheetCancelButton} disabled={deleting} onPress={() => setConfirmDelete(false)}><Text style={styles.sheetCancelText}>Keep Vehicle</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.sheetCancelButton} disabled={deleting} onPress={() => setConfirmDelete(false)}><Text style={styles.sheetCancelText}>{t('Keep Vehicle')}</Text></TouchableOpacity>
               </>
             )}
           </TouchableOpacity>
@@ -1130,11 +1177,11 @@ function FinesScreen({
   return (
     <View style={styles.screenFlex}>
       <AppScroll bottomInset refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} tintColor={GREEN_DARK} />}>
-        <Header title="Fines" subtitle="Parking and camera violations across your garage." />
+        <Header title={t('Fines')} subtitle={t('Parking and camera violations across your garage.')} />
         <View style={styles.segmentRow}>
-          <Segment label={`All (${items.length})`} active={filter === 'all'} onPress={() => setFilter('all')} />
-          <Segment label={`Unpaid (${unpaid})`} active={filter === 'unpaid'} onPress={() => setFilter('unpaid')} />
-          <Segment label={`Paid (${paid})`} active={filter === 'paid'} onPress={() => setFilter('paid')} />
+          <Segment label={t('All ({count})', { count: items.length })} active={filter === 'all'} onPress={() => setFilter('all')} />
+          <Segment label={t('Unpaid ({count})', { count: unpaid })} active={filter === 'unpaid'} onPress={() => setFilter('unpaid')} />
+          <Segment label={t('Paid ({count})', { count: paid })} active={filter === 'paid'} onPress={() => setFilter('paid')} />
         </View>
         <View style={{ gap: 10 }}>
           {filtered.map((item) => (
@@ -1143,8 +1190,8 @@ function FinesScreen({
         </View>
         {filtered.length === 0 && (
           cars.length === 0
-            ? <EmptyCard iconSource={ICON_VEHICLES} title="Add a vehicle first" body="Once you save a vehicle, its tracked NYC fines will appear here." button="Add Vehicle" onPress={() => setRoute({ name: 'addVehicle' })} />
-            : <EmptyCard iconSource={ICON_FINES} title={filter === 'paid' ? 'No paid fines yet' : 'You’re clear'} body={filter === 'paid' ? 'Paid violations will remain available here for reference.' : 'No outstanding fines are saved right now.'} />
+            ? <EmptyCard iconSource={ICON_VEHICLES} title={t('Add a vehicle first')} body={t('Once you save a vehicle, its tracked NYC fines will appear here.')} button={t('Add Vehicle')} onPress={() => setRoute({ name: 'addVehicle' })} />
+            : <EmptyCard iconSource={ICON_FINES} title={filter === 'paid' ? t('No paid fines yet') : t('You’re clear')} body={filter === 'paid' ? t('Paid violations will remain available here for reference.') : t('No outstanding fines are saved right now.')} />
         )}
       </AppScroll>
       <BottomNav active="fines" onTab={openMain} />
@@ -1165,7 +1212,7 @@ function FineRow({ violation, carName, onPress }: { violation: Violation; carNam
         <Text style={styles.fineRowMeta} numberOfLines={1}>#{violation.summons_number}{carName ? ` · ${carName}` : ''}</Text>
         <Text style={styles.fineRowMeta} numberOfLines={1}>{formatIssueDate(violation.issue_date)}{violation.street_name ? ` · ${violation.street_name}` : ''}</Text>
       </View>
-      <View style={styles.fineRight}><Text style={styles.fineRowAmount}>${shownAmount.toFixed(2)}</Text><Pill label={due > 0 ? 'Unpaid' : 'Paid'} tone={due > 0 ? 'red' : 'green'} /></View>
+      <View style={styles.fineRight}><Text style={styles.fineRowAmount}>${shownAmount.toFixed(2)}</Text><Pill label={due > 0 ? t('Unpaid') : t('Paid')} tone={due > 0 ? 'red' : 'green'} /></View>
       <Chevron />
     </TouchableOpacity>
   );
@@ -1176,28 +1223,28 @@ function ViolationDetailScreen({ route, setRoute, goBack }: { route: Extract<Rou
   const due = toMoney(v.amount_due);
   return (
     <AppScroll bottomInset>
-      <TopBack onPress={goBack} center="Fine Details" />
+      <TopBack onPress={goBack} center={t('Fine Details')} />
       <View style={styles.violationHeaderCard}>
         <View style={styles.violationHeaderTop}>
           <View style={[styles.redIcon, due === 0 && { backgroundColor: APP_GREEN_SOFT }]}><IconImage source={ICON_FINES} size={21} tint={due > 0 ? APP_RED : APP_GREEN} /></View>
-          <View style={{ flex: 1, minWidth: 0 }}><Text style={styles.violationHeaderTitle} numberOfLines={2}>{friendlyViolation(v.violation)}</Text><Text style={styles.violationHeaderSub}>Summons #{v.summons_number}</Text></View>
-          <Pill label={due > 0 ? 'Unpaid' : 'Paid'} tone={due > 0 ? 'red' : 'green'} />
+          <View style={{ flex: 1, minWidth: 0 }}><Text style={styles.violationHeaderTitle} numberOfLines={2}>{friendlyViolation(v.violation)}</Text><Text style={styles.violationHeaderSub}>{t('Summons #{number}', { number: v.summons_number })}</Text></View>
+          <Pill label={due > 0 ? t('Unpaid') : t('Paid')} tone={due > 0 ? 'red' : 'green'} />
         </View>
         <Text style={styles.bigMoney}>${(due > 0 ? due : toMoney(v.payment_amount)).toFixed(2)}</Text>
-        {due === 0 ? <Text style={styles.violationHeaderSub}>Paid to NYC</Text> : null}
+        {due === 0 ? <Text style={styles.violationHeaderSub}>{t('Paid to NYC')}</Text> : null}
       </View>
       <View style={styles.detailList}>
-        <DetailLine iconSource={ICON_NOTIFICATION} label="Date" value={formatIssueDate(v.issue_date)} sub={v.violation_time || undefined} />
-        <DetailLine iconSource={ICON_HOME} label="Location" value={violationLocation(v)} sub={v.county || 'New York, NY'} />
-        <DetailLine iconSource={ICON_FINES} label="Violation" value={friendlyViolation(v.violation)} sub={v.violation_status || 'NYC parking/camera violation'} />
-        <DetailLine iconSource={ICON_MORE} label="Issued By" value={v.issuing_agency || 'NYC Department of Finance'} />
-        <DetailLine iconSource={ICON_VEHICLES} label="Vehicle" value={route.carName || `${v.plate} · ${v.state}`} sub={`${v.plate} · ${stateName(v.state)}`} />
+        <DetailLine iconSource={ICON_NOTIFICATION} label={t('Date')} value={formatIssueDate(v.issue_date)} sub={v.violation_time || undefined} />
+        <DetailLine iconSource={ICON_HOME} label={t('Location')} value={violationLocation(v)} sub={v.county || t('New York, NY')} />
+        <DetailLine iconSource={ICON_FINES} label={t('Violation')} value={friendlyViolation(v.violation)} sub={v.violation_status || t('NYC parking/camera violation')} />
+        <DetailLine iconSource={ICON_MORE} label={t('Issued By')} value={v.issuing_agency || t('NYC Department of Finance')} />
+        <DetailLine iconSource={ICON_VEHICLES} label={t('Vehicle')} value={route.carName || `${v.plate} · ${v.state}`} sub={`${v.plate} · ${stateName(v.state)}`} />
       </View>
-      <TouchableOpacity style={styles.copySummonsButton} onPress={() => void copySummons(v.summons_number)} activeOpacity={0.82} accessibilityRole="button" accessibilityLabel={`Copy summons ${v.summons_number}`}>
-        <Text style={styles.copySummonsText} numberOfLines={1}>Copy summons: #{v.summons_number}</Text>
+      <TouchableOpacity style={styles.copySummonsButton} onPress={() => void copySummons(v.summons_number)} activeOpacity={0.82} accessibilityRole="button" accessibilityLabel={t('Copy summons {number}', { number: v.summons_number })}>
+        <Text style={styles.copySummonsText} numberOfLines={1}>{t('Copy summons: #{number}', { number: v.summons_number })}</Text>
         <IconImage source={ICON_COPY_DETAIL} size={21} tint={APP_TEXT} />
       </TouchableOpacity>
-      {due > 0 && <PrimaryButton title="Pay on NYC CityPay" hideArrow onPress={() => setRoute({ name: 'payment', violation: v })} />}
+      {due > 0 && <PrimaryButton title={t('Pay on NYC CityPay')} hideArrow onPress={() => setRoute({ name: 'payment', violation: v })} />}
     </AppScroll>
   );
 }
@@ -1216,15 +1263,15 @@ function PaymentScreen({ violation, goBack }: { violation: Violation; goBack: ()
             <IconImage source={ICON_OUTSTANDING} size={31} tint={INK} />
             <View style={styles.externalGreen}><IconImage source={ICON_ARROW} size={18} tint={APP_TEXT} /></View>
           </View>
-          <Text style={styles.paymentTitle}>Pay on NYC CityPay</Text>
-          <Text style={styles.paymentSub}>Tixradar doesn’t collect fine payments. We’ll copy your summons number and open the official NYC CityPay website.</Text>
+          <Text style={styles.paymentTitle}>{t('Pay on NYC CityPay')}</Text>
+          <Text style={styles.paymentSub}>{t('Tixradar doesn’t collect fine payments. We’ll copy your summons number and open the official NYC CityPay website.')}</Text>
           <View style={styles.trustCard}>
-            <TrustLine iconSource={ICON_HOME} title="Official NYC website" body="Payment happens directly with New York City." />
-            <TrustLine iconSource={ICON_FINES} title="Summons ready" body={`#${violation.summons_number} will be copied before CityPay opens.`} />
-            <TrustLine iconSource={ICON_ARROW} title="Secure handoff" body="Complete payment in your browser, then return to Tixradar." />
+            <TrustLine iconSource={ICON_HOME} title={t('Official NYC website')} body={t('Payment happens directly with New York City.')} />
+            <TrustLine iconSource={ICON_FINES} title={t('Summons ready')} body={`#${violation.summons_number} will be copied before CityPay opens.`} />
+            <TrustLine iconSource={ICON_ARROW} title={t('Secure handoff')} body={t('Complete payment in your browser, then return to Tixradar.')} />
           </View>
         </View>
-        <View style={styles.paymentBottom}><PrimaryButton title="Open CityPay" hideArrow onPress={() => void openCityPay()} /><TouchableOpacity onPress={goBack}><Text style={styles.cancelText}>Cancel</Text></TouchableOpacity></View>
+        <View style={styles.paymentBottom}><PrimaryButton title={t('Open CityPay')} hideArrow onPress={() => void openCityPay()} /><TouchableOpacity onPress={goBack}><Text style={styles.cancelText}>{t('Cancel')}</Text></TouchableOpacity></View>
       </View>
     </View>
   );
@@ -1232,7 +1279,6 @@ function PaymentScreen({ violation, goBack }: { violation: Violation; goBack: ()
 
 function LookupScreen({ mode, setRoute, goBack }: { mode: LookupMode; setRoute: (route: Route) => void; goBack: () => void }) {
   const [plate, setPlate] = useState('');
-  const [state, setState] = useState('NY');
   const [vin, setVin] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -1242,7 +1288,10 @@ function LookupScreen({ mode, setRoute, goBack }: { mode: LookupMode; setRoute: 
     if (mode !== 'plate') return;
     void AsyncStorage.getItem(RECENT_LOOKUPS_KEY).then((value) => {
       if (!value) return;
-      try { setRecent(JSON.parse(value)); } catch { setRecent([]); }
+      try {
+        const saved = JSON.parse(value) as Array<{ plate: string; state: string }>;
+        setRecent(saved.filter((item) => item.state === SERVICE_STATE));
+      } catch { setRecent([]); }
     });
   }, [mode]);
 
@@ -1266,14 +1315,14 @@ function LookupScreen({ mode, setRoute, goBack }: { mode: LookupMode; setRoute: 
     try {
       if (mode === 'plate') {
         const normalizedPlate = plate.trim().toUpperCase();
-        if (!normalizedPlate) throw new Error('Enter a license plate.');
-        if (normalizedPlate.length > 12) throw new Error('Check the license plate and try again.');
-        const result = await fetchViolations(normalizedPlate, state);
+        if (!normalizedPlate) throw new Error(t('Enter a license plate.'));
+        if (normalizedPlate.length > 12) throw new Error(t('Check the license plate and try again.'));
+        const result = await fetchViolations(normalizedPlate, SERVICE_STATE);
         await rememberLookup(result.plate, result.state);
         setRoute({ name: 'lookupResults', plate: result.plate, state: result.state, violations: result.violations });
       } else {
         const normalizedVin = normalizeVin(vin);
-        if (!isValidVin(normalizedVin)) throw new Error('Enter a valid 17-character VIN.');
+        if (!isValidVin(normalizedVin)) throw new Error(t('Enter a valid 17-character VIN.'));
         const result = await fetchRegistration(normalizedVin);
         setRoute({ name: 'registrationResults', vin: result.vin, registrations: result.registrations });
       }
@@ -1288,22 +1337,21 @@ function LookupScreen({ mode, setRoute, goBack }: { mode: LookupMode; setRoute: 
     <AppScroll>
       <TopBack onPress={goBack} />
       <View style={styles.lookupIcon}><IconImage source={mode === 'plate' ? ICON_SEARCH : ICON_VIN} size={30} tint={INK} /></View>
-      <Text style={styles.lookupTitle}>{mode === 'plate' ? 'Check a Plate' : 'Check a VIN'}</Text>
-      <Text style={styles.lookupSub}>{mode === 'plate' ? 'Enter a license plate to check NYC parking and camera violations.' : 'Enter a VIN to check public New York DMV registration information.'}</Text>
+      <Text style={styles.lookupTitle}>{mode === 'plate' ? t('Check a Plate') : t('Check a VIN')}</Text>
+      <Text style={styles.lookupSub}>{mode === 'plate' ? t('Enter a license plate to check NYC parking and camera violations.') : t('Enter a VIN to check public New York DMV registration information.')}</Text>
       {mode === 'plate' ? (
         <>
-          <Label text="License Plate" /><Field plain placeholder="KZP-7314" value={plate} onChangeText={(v) => setPlate(v.toUpperCase())} autoCapitalize="characters" autoCorrect={false} maxLength={12} returnKeyType="next" />
-          <Label text="State" /><PickerField value={state} onValueChange={setState} values={US_STATES} />
+          <Label text={t('License Plate')} /><Field plain placeholder="KZP-7314" value={plate} onChangeText={(v) => setPlate(v.toUpperCase())} autoCapitalize="characters" autoCorrect={false} maxLength={12} returnKeyType="done" />
         </>
       ) : (
-        <><Label text="VIN" /><Field plain placeholder="5YJ3E1EA7NF324518" value={vin} onChangeText={(v) => setVin(normalizeVin(v))} autoCapitalize="characters" autoCorrect={false} maxLength={17} /></>
+        <><Label text={t('VIN')} /><Field plain placeholder="5YJ3E1EA7NF324518" value={vin} onChangeText={(v) => setVin(normalizeVin(v))} autoCapitalize="characters" autoCorrect={false} maxLength={17} /></>
       )}
       {!!error && <Text style={styles.formError}>{error}</Text>}
-      <PrimaryButton title={loading ? 'Checking…' : mode === 'plate' ? 'Check Plate' : 'Check VIN'} iconSource={mode === 'plate' ? ICON_SEARCH : ICON_VIN} onPress={() => void submit()} disabled={loading} />
+      <PrimaryButton title={loading ? t('Checking…') : mode === 'plate' ? t('Check Plate') : t('Check VIN')} iconSource={mode === 'plate' ? ICON_SEARCH : ICON_VIN} onPress={() => void submit()} disabled={loading} />
       {mode === 'plate' && recent.length > 0 ? (
         <View style={{ marginTop: 30 }}>
-          <SectionTitle title="Recent lookups" action="Clear" onAction={() => void clearRecent()} />
-          {recent.map((item) => <RecentLookup key={`${item.state}-${item.plate}`} plate={item.plate} state={stateName(item.state)} onPress={() => { setPlate(item.plate); setState(item.state); }} />)}
+          <SectionTitle title={t('Recent lookups')} action={t('Clear')} onAction={() => void clearRecent()} />
+          {recent.map((item) => <RecentLookup key={`${item.state}-${item.plate}`} plate={item.plate} state={stateName(item.state)} onPress={() => setPlate(item.plate)} />)}
         </View>
       ) : null}
     </AppScroll>
@@ -1315,16 +1363,16 @@ function LookupResultsScreen({ route, setRoute, goBack }: { route: Extract<Route
   const total = open.reduce((s, v) => s + toMoney(v.amount_due), 0);
   return (
     <AppScroll bottomInset>
-      <TopBack onPress={goBack} center="Plate Results" />
-      <View style={styles.lookupResultHero}><Image source={CAR_SEDAN} style={styles.lookupResultCar} resizeMode="contain" /><Pill label="Lookup complete" tone="green" /></View>
+      <TopBack onPress={goBack} center={t('Plate Results')} />
+      <View style={styles.lookupResultHero}><Image source={CAR_SEDAN} style={styles.lookupResultCar} resizeMode="contain" /><Pill label={t('Lookup complete')} tone="green" /></View>
       <Text style={styles.resultPlate}>{route.plate}</Text><Text style={styles.resultState}>{stateName(route.state)}</Text>
-      <View style={styles.twoCol}><StatCard iconSource={ICON_WARNING} value={String(open.length)} label="Open fines" tone="red" /><StatCard iconSource={ICON_OUTSTANDING} value={`$${total.toFixed(2)}`} label="Outstanding" tone="green" /></View>
-      <View style={styles.lookupInfoCard}><View style={styles.lookupInfoIcon}><IconImage source={ICON_SEARCH} size={18} tint={INK} /></View><View style={{ flex: 1 }}><Text style={styles.previewLabel}>NYC violation lookup</Text><Text style={styles.previewSub}>Parking and camera violations returned by the public NYC dataset.</Text></View></View>
-      <SectionTitle title={`Outstanding fines (${open.length})`} />
+      <View style={styles.twoCol}><StatCard iconSource={ICON_WARNING} value={String(open.length)} label={t('Open fines')} tone="red" /><StatCard iconSource={ICON_OUTSTANDING} value={`$${total.toFixed(2)}`} label={t('Outstanding')} tone="green" /></View>
+      <View style={styles.lookupInfoCard}><View style={styles.lookupInfoIcon}><IconImage source={ICON_SEARCH} size={18} tint={INK} /></View><View style={{ flex: 1 }}><Text style={styles.previewLabel}>{t('NYC violation lookup')}</Text><Text style={styles.previewSub}>{t('Parking and camera violations returned by the public NYC dataset.')}</Text></View></View>
+      <SectionTitle title={t('Outstanding fines ({count})', { count: open.length })} />
       <View style={{ gap: 10 }}>
         {open.map((v) => <FineRow key={v.summons_number} violation={v} onPress={() => setRoute({ name: 'violationDetail', violation: v })} />)}
       </View>
-      {open.length === 0 && <EmptyCard iconSource={ICON_FINES} title="No open fines found" body="No outstanding NYC parking or camera violations were returned for this plate." />}
+      {open.length === 0 && <EmptyCard iconSource={ICON_FINES} title={t('No open fines found')} body={t('No outstanding NYC parking or camera violations were returned for this plate.')} />}
     </AppScroll>
   );
 }
@@ -1334,20 +1382,20 @@ function RegistrationResultsScreen({ route, goBack }: { route: Extract<Route, { 
   const flags = registrationFlags(reg);
   return (
     <AppScroll>
-      <TopBack onPress={goBack} center="VIN Results" />
+      <TopBack onPress={goBack} center={t('VIN Results')} />
       <View style={[styles.successBadge, !reg && styles.errorBadge]}>{reg ? <Text style={styles.successCheck}>✓</Text> : <IconImage source={ICON_WARNING} size={28} tint={APP_RED} />}</View>
-      <Text style={styles.lookupTitle}>{reg ? 'Registration Found' : 'No Public Record Found'}</Text>
-      <Text style={styles.lookupSub}>{reg ? 'Here’s the public DMV registration information available for this VIN.' : 'The public New York DMV dataset didn’t return a registration record for this VIN.'}</Text>
+      <Text style={styles.lookupTitle}>{reg ? t('Registration Found') : t('No Public Record Found')}</Text>
+      <Text style={styles.lookupSub}>{reg ? t('Here’s the public DMV registration information available for this VIN.') : t('The public New York DMV dataset didn’t return a registration record for this VIN.')}</Text>
       {reg && (
         <View style={styles.detailList}>
-          <DetailLine iconSource={ICON_VIN} label="VIN" value={route.vin} />
-          <DetailLine iconSource={ICON_VEHICLES} label="Vehicle" value={`${reg.model_year || ''} ${reg.make || ''} ${reg.body_type || ''}`.trim() || 'Vehicle'} />
-          <DetailLine iconSource={flags.length ? ICON_WARNING : ICON_VEHICLES} label="Registration" value={flags.length ? 'Needs attention' : 'Active'} />
-          <DetailLine iconSource={ICON_NOTIFICATION} label="Expires" value={formatDate(reg.reg_expiration_date)} />
-          <DetailLine iconSource={ICON_HOME} label="Location" value={[reg.city, reg.state, reg.zip].filter(Boolean).join(', ')} />
+          <DetailLine iconSource={ICON_VIN} label={t('VIN')} value={route.vin} />
+          <DetailLine iconSource={ICON_VEHICLES} label={t('Vehicle')} value={`${reg.model_year || ''} ${reg.make || ''} ${reg.body_type || ''}`.trim() || t('Vehicle')} />
+          <DetailLine iconSource={flags.length ? ICON_WARNING : ICON_VEHICLES} label={t('Registration')} value={flags.length ? t('Needs attention') : t('Active')} />
+          <DetailLine iconSource={ICON_NOTIFICATION} label={t('Expires')} value={formatDate(reg.reg_expiration_date)} />
+          <DetailLine iconSource={ICON_HOME} label={t('Location')} value={[reg.city, reg.state, reg.zip].filter(Boolean).join(', ')} />
         </View>
       )}
-      <View style={styles.sourceInfoBox}><IconImage source={ICON_MORE} size={17} tint={MUTED} /><Text style={styles.sourceNoteInline}>Public VIN lookup only. New York’s public registration dataset does not expose plate-to-registration linkage.</Text></View>
+      <View style={styles.sourceInfoBox}><IconImage source={ICON_MORE} size={17} tint={MUTED} /><Text style={styles.sourceNoteInline}>{t('Public VIN lookup only. New York’s public registration dataset does not expose plate-to-registration linkage.')}</Text></View>
     </AppScroll>
   );
 }
@@ -1355,7 +1403,6 @@ function RegistrationResultsScreen({ route, goBack }: { route: Extract<Route, { 
 function AddVehicleScreen({ session, goBack, onCreated }: { session: Session; goBack: () => void; onCreated: (car: CarSummary) => void }) {
   const [nickname, setNickname] = useState('');
   const [plate, setPlate] = useState('');
-  const [state, setState] = useState('NY');
   const [vin, setVin] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -1365,16 +1412,16 @@ function AddVehicleScreen({ session, goBack, onCreated }: { session: Session; go
     const cleanNickname = nickname.trim();
     const cleanPlate = plate.trim().toUpperCase();
     const cleanVin = normalizeVin(vin);
-    if (!cleanNickname) return setError('Give this vehicle a nickname.');
-    if (!cleanPlate) return setError('Enter the license plate.');
-    if (cleanVin && !isValidVin(cleanVin)) return setError('VIN must be 17 valid characters, or leave it blank.');
+    if (!cleanNickname) return setError(t('Give this vehicle a nickname.'));
+    if (!cleanPlate) return setError(t('Enter the license plate.'));
+    if (cleanVin && !isValidVin(cleanVin)) return setError(t('VIN must be 17 valid characters, or leave it blank.'));
     setLoading(true);
     try {
       if (session.demo) {
-        const car: CarSummary = { id: Date.now(), nickname: cleanNickname, plate: cleanPlate, state, vin: cleanVin || null, vehicle_icon: 'sedan', violation_count: 0, total_amount_due: 0, has_registration: Boolean(cleanVin) };
+        const car: CarSummary = { id: Date.now(), nickname: cleanNickname, plate: cleanPlate, state: SERVICE_STATE, vin: cleanVin || null, vehicle_icon: 'sedan', violation_count: 0, total_amount_due: 0, has_registration: Boolean(cleanVin) };
         onCreated(car);
       } else {
-        const result = await createCar(session.token, { nickname: cleanNickname, plate: cleanPlate, state, vin: cleanVin || undefined });
+        const result = await createCar(session.token, { nickname: cleanNickname, plate: cleanPlate, state: SERVICE_STATE, vin: cleanVin || undefined });
         onCreated(result.car);
       }
     } catch (err) { setError(getErrorMessage(err)); } finally { setLoading(false); }
@@ -1383,16 +1430,15 @@ function AddVehicleScreen({ session, goBack, onCreated }: { session: Session; go
   return (
     <AppScroll>
       <TopBack onPress={goBack} left="×" />
-      <Text style={styles.lookupTitle}>Add a Vehicle</Text>
-      <Text style={styles.lookupSub}>Add the plate and an optional VIN. NY-registered vehicles only for now.</Text>
-      <Label text="Vehicle Nickname" /><Field plain placeholder="My car" value={nickname} onChangeText={setNickname} autoCapitalize="words" maxLength={40} />
-      <Text style={styles.helperText}>Something easy to recognize, like Family SUV or Work Car.</Text>
-      <Label text="License Plate" /><Field plain placeholder="KZP-7314" value={plate} onChangeText={(v) => setPlate(v.toUpperCase())} autoCapitalize="characters" autoCorrect={false} maxLength={12} />
-      <Label text="State" /><PickerField value={state} onValueChange={setState} values={SUPPORTED_VEHICLE_STATES} />
-      <Label text="VIN (Optional)" /><Field plain placeholder="5YJ3E1EA7NF324518" value={vin} onChangeText={(v) => setVin(normalizeVin(v))} autoCapitalize="characters" autoCorrect={false} maxLength={17} />
-      <Text style={styles.helperText}>VINs are 17 characters. Letters I, O, and Q are not used.</Text>
+      <Text style={styles.lookupTitle}>{t('Add a Vehicle')}</Text>
+      <Text style={styles.lookupSub}>{t('Add the plate and an optional VIN. NY-registered vehicles only for now.')}</Text>
+      <Label text={t('Vehicle Nickname')} /><Field plain placeholder={t('My car')} value={nickname} onChangeText={setNickname} autoCapitalize="words" maxLength={40} />
+      <Text style={styles.helperText}>{t('Something easy to recognize, like Family SUV or Work Car.')}</Text>
+      <Label text={t('License Plate')} /><Field plain placeholder="KZP-7314" value={plate} onChangeText={(v) => setPlate(v.toUpperCase())} autoCapitalize="characters" autoCorrect={false} maxLength={12} />
+      <Label text={t('VIN (Optional)')} /><Field plain placeholder="5YJ3E1EA7NF324518" value={vin} onChangeText={(v) => setVin(normalizeVin(v))} autoCapitalize="characters" autoCorrect={false} maxLength={17} />
+      <Text style={styles.helperText}>{t('VINs are 17 characters. Letters I, O, and Q are not used.')}</Text>
       {!!error && <Text style={styles.formError}>{error}</Text>}
-      <PrimaryButton title={loading ? 'Adding Vehicle…' : 'Add Vehicle'} onPress={() => void submit()} disabled={loading} hideArrow />
+      <PrimaryButton title={loading ? t('Adding Vehicle…') : t('Add Vehicle')} onPress={() => void submit()} disabled={loading} hideArrow />
     </AppScroll>
   );
 }
@@ -1412,23 +1458,22 @@ function EditVehicleScreen({
   const car = detail?.car;
   const [nickname, setNickname] = useState(car?.nickname || '');
   const [plate, setPlate] = useState(car?.plate || '');
-  const [state, setState] = useState(car?.state || 'NY');
   const [vin, setVin] = useState(car?.vin || '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  if (!car) return <CenteredState title="Vehicle unavailable" body="Go back to your garage and try again." onBack={goBack} />;
+  if (!car) return <CenteredState title={t('Vehicle unavailable')} body={t('Go back to your garage and try again.')} onBack={goBack} />;
 
   async function submit() {
     setError('');
     const cleanNickname = nickname.trim();
     const cleanPlate = plate.trim().toUpperCase();
     const cleanVin = normalizeVin(vin);
-    if (!cleanNickname || !cleanPlate) return setError('Nickname and license plate are required.');
-    if (cleanVin && !isValidVin(cleanVin)) return setError('VIN must be 17 valid characters, or leave it blank.');
+    if (!cleanNickname || !cleanPlate) return setError(t('Nickname and license plate are required.'));
+    if (cleanVin && !isValidVin(cleanVin)) return setError(t('VIN must be 17 valid characters, or leave it blank.'));
     setLoading(true);
     try {
-      await onSave(car.id, { nickname: cleanNickname, plate: cleanPlate, state, vin: cleanVin || undefined });
+      await onSave(car.id, { nickname: cleanNickname, plate: cleanPlate, state: car.state, vin: cleanVin || undefined });
       goBack();
     } catch (err) {
       setError(getErrorMessage(err));
@@ -1439,14 +1484,13 @@ function EditVehicleScreen({
 
   return (
     <AppScroll>
-      <TopBack onPress={goBack} center="Edit Vehicle" />
-      <Label text="Vehicle Nickname" /><Field plain value={nickname} onChangeText={setNickname} autoCapitalize="words" maxLength={40} />
-      <Label text="License Plate" /><Field plain value={plate} onChangeText={(v) => setPlate(v.toUpperCase())} autoCapitalize="characters" autoCorrect={false} maxLength={12} />
-      <Label text="State" /><PickerField value={state} onValueChange={setState} values={SUPPORTED_VEHICLE_STATES.includes(car.state) ? SUPPORTED_VEHICLE_STATES : [car.state, ...SUPPORTED_VEHICLE_STATES]} />
-      <Label text="VIN (Optional)" /><Field plain placeholder="Add VIN" value={vin} onChangeText={(v) => setVin(normalizeVin(v))} autoCapitalize="characters" autoCorrect={false} maxLength={17} />
-      <View style={styles.editNotice}><IconImage source={ICON_MORE} size={16} tint={APP_MUTED} /><Text style={styles.editNoticeText}>Changing the plate or state refreshes tracked fines. Changing the VIN refreshes registration data.</Text></View>
+      <TopBack onPress={goBack} center={t('Edit Vehicle')} />
+      <Label text={t('Vehicle Nickname')} /><Field plain value={nickname} onChangeText={setNickname} autoCapitalize="words" maxLength={40} />
+      <Label text={t('License Plate')} /><Field plain value={plate} onChangeText={(v) => setPlate(v.toUpperCase())} autoCapitalize="characters" autoCorrect={false} maxLength={12} />
+      <Label text={t('VIN (Optional)')} /><Field plain placeholder={t('Add VIN')} value={vin} onChangeText={(v) => setVin(normalizeVin(v))} autoCapitalize="characters" autoCorrect={false} maxLength={17} />
+      <View style={styles.editNotice}><IconImage source={ICON_MORE} size={16} tint={APP_MUTED} /><Text style={styles.editNoticeText}>{t('Changing the plate refreshes tracked fines. Changing the VIN refreshes registration data.')}</Text></View>
       {!!error && <Text style={styles.formError}>{error}</Text>}
-      <PrimaryButton title={loading ? 'Saving…' : 'Save Changes'} iconSource={ICON_VEHICLES} onPress={() => void submit()} disabled={loading} />
+      <PrimaryButton title={loading ? t('Saving…') : t('Save Changes')} iconSource={ICON_VEHICLES} onPress={() => void submit()} disabled={loading} />
     </AppScroll>
   );
 }
@@ -1456,14 +1500,14 @@ function VehicleAddedScreen({ car, openMain, setRoute }: { car: CarSummary; open
     <View style={styles.successPage}>
       <View style={styles.fixedScreenInnerCenter}>
         <View style={styles.successBadge}><Text style={styles.successCheck}>✓</Text></View>
-        <Text style={styles.successTitle}>Vehicle Added</Text>
-        <Text style={styles.successSub}>Tixradar is ready to track this vehicle’s fines and registration information.</Text>
+        <Text style={styles.successTitle}>{t('Vehicle Added')}</Text>
+        <Text style={styles.successSub}>{t('Tixradar is ready to track this vehicle’s fines and registration information.')}</Text>
         <Image source={carImageForCar(car)} style={styles.successCar} resizeMode="contain" />
         <TouchableOpacity style={styles.successCarCard} onPress={() => setRoute({ name: 'carDetail', carId: car.id })} activeOpacity={0.85}>
           <View><Text style={styles.vehicleCardTitle}>{car.nickname}</Text><Text style={styles.vehicleCardPlate}>{car.plate} · {stateName(car.state)}</Text></View><Chevron />
         </TouchableOpacity>
-        <PrimaryButton title="View Vehicle" iconSource={ICON_VEHICLES} onPress={() => setRoute({ name: 'carDetail', carId: car.id })} />
-        <SecondaryButton title="Back to Home" iconSource={ICON_HOME} onPress={() => openMain('home')} />
+        <PrimaryButton title={t('View Vehicle')} iconSource={ICON_VEHICLES} onPress={() => setRoute({ name: 'carDetail', carId: car.id })} />
+        <SecondaryButton title={t('Back to Home')} iconSource={ICON_HOME} onPress={() => openMain('home')} />
       </View>
     </View>
   );
@@ -1478,28 +1522,28 @@ function OfferDetailScreen({ offerId, goBack }: { offerId: OfferId; goBack: () =
   }
   return (
     <AppScroll>
-      <TopBack onPress={goBack} center="Offer" />
+      <TopBack onPress={goBack} center={t('Offer')} />
       <Image source={offer.image} style={styles.offerDetailImage} resizeMode="cover" />
-      <View style={styles.offerEyebrowRow}><Pill label="Tixradar offer" tone="green" /><Text style={styles.offerDiscount}>20% OFF</Text></View>
-      <Text style={styles.offerDetailTitle}>{offer.title}</Text>
-      <Text style={styles.offerDetailSub}>{offer.short}</Text>
+      <View style={styles.offerEyebrowRow}><Pill label={t('Tixradar offer')} tone="green" /><Text style={styles.offerDiscount}>{t('20% OFF')}</Text></View>
+      <Text style={styles.offerDetailTitle}>{t(offer.title)}</Text>
+      <Text style={styles.offerDetailSub}>{t(offer.short)}</Text>
       <View style={styles.offerInfoCard}>
-        <Text style={styles.offerInfoLabel}>Where to use it</Text>
-        <Text style={styles.offerInfoValue}>{offer.partner}</Text>
+        <Text style={styles.offerInfoLabel}>{t('Where to use it')}</Text>
+        <Text style={styles.offerInfoValue}>{t(offer.partner)}</Text>
         <View style={styles.offerInfoDivider} />
-        <Text style={styles.offerInfoLabel}>How it works</Text>
-        <Text style={styles.offerInfoBody}>Claim the offer in Tixradar, then show the code at the participating location before checkout.</Text>
+        <Text style={styles.offerInfoLabel}>{t('How it works')}</Text>
+        <Text style={styles.offerInfoBody}>{t('Claim the offer in Tixradar, then show the code at the participating location before checkout.')}</Text>
       </View>
       {!claimed ? (
-        <PrimaryButton title="Claim 20% Off" iconSource={ICON_OUTSTANDING} onPress={() => setClaimed(true)} />
+        <PrimaryButton title={t('Claim 20% Off')} iconSource={ICON_OUTSTANDING} onPress={() => setClaimed(true)} />
       ) : (
         <View style={styles.claimCard}>
           <View style={styles.claimCheck}><Text style={styles.claimCheckText}>✓</Text></View>
-          <View style={{ flex: 1 }}><Text style={styles.claimTitle}>Offer claimed</Text><Text style={styles.claimSub}>Tap the code to copy it</Text></View>
-          <TouchableOpacity onPress={() => void copyCode()} style={styles.claimCodeButton}><Text style={styles.claimCode}>{offer.code}</Text><Text style={styles.claimCopy}>Copy</Text></TouchableOpacity>
+          <View style={{ flex: 1 }}><Text style={styles.claimTitle}>{t('Offer claimed')}</Text><Text style={styles.claimSub}>{t('Tap the code to copy it')}</Text></View>
+          <TouchableOpacity onPress={() => void copyCode()} style={styles.claimCodeButton}><Text style={styles.claimCode}>{offer.code}</Text><Text style={styles.claimCopy}>{t('Copy')}</Text></TouchableOpacity>
         </View>
       )}
-      <Text style={styles.offerTerms}>{offer.terms}</Text>
+      <Text style={styles.offerTerms}>{t(offer.terms)}</Text>
     </AppScroll>
   );
 }
@@ -1512,15 +1556,16 @@ function NotificationsScreen({ notifications, details, goBack }: { notifications
     .filter((n) => n.kind !== 'weekly_reminder')
     .map((n) => ({
       id: `fine-${n.id}`, category: 'fines', iconSource: ICON_WARNING,
-      title: n.title || n.violation || 'New fine detected',
-      body: n.body || `${toMoney(n.amount_due) > 0 ? `$${formatCompactMoney(toMoney(n.amount_due))} due · ` : ''}${n.nickname} · ${n.plate}`,
+      // Titles are generated in English by the server; translate the known ones.
+      title: n.title ? t(n.title) : n.violation ? friendlyViolation(n.violation) : t('New fine detected'),
+      body: n.body || `${toMoney(n.amount_due) > 0 ? `${t('${amount} due', { amount: formatCompactMoney(toMoney(n.amount_due)) })} · ` : ''}${n.nickname} · ${n.plate}`,
       time: timeAgo(n.created_at), tone: 'red',
     }));
   const backendReminderItems: ActivityItem[] = notifications
     .filter((n) => n.kind === 'weekly_reminder')
     .map((n) => ({
       id: `reminder-${n.id}`, category: 'reminders', iconSource: ICON_WEEKLY_DETAIL,
-      title: n.title || 'Weekly fine reminder', body: n.body || `${n.nickname} still has open fines to review.`,
+      title: n.title ? t(n.title) : t('Weekly fine reminder'), body: n.body || t('{name} still has open fines to review.', { name: n.nickname }),
       time: timeAgo(n.created_at), tone: 'blue',
     }));
   const reminderCarIds = new Set(notifications.filter((n) => n.kind === 'weekly_reminder').map((n) => n.car_id));
@@ -1530,18 +1575,22 @@ function NotificationsScreen({ notifications, details, goBack }: { notifications
     .filter(({ open }) => open.length > 0)
     .map(({ detail, open }) => ({
       id: `weekly-${detail.car.id}`, category: 'reminders' as const, iconSource: ICON_WEEKLY_DETAIL,
-      title: 'Weekly fine reminder',
-      body: `${detail.car.nickname} has ${open.length} open fine${open.length === 1 ? '' : 's'} totaling $${formatCompactMoney(open.reduce((sum, item) => sum + toMoney(item.amount_due), 0))}.`,
-      time: 'Weekly', tone: 'blue' as const,
+      title: t('Weekly fine reminder'),
+      body: t(open.length === 1 ? '{name} has 1 open fine totaling ${amount}.' : '{name} has {count} open fines totaling ${amount}.', {
+        name: detail.car.nickname,
+        count: open.length,
+        amount: formatCompactMoney(open.reduce((sum, item) => sum + toMoney(item.amount_due), 0)),
+      }),
+      time: t('Weekly'), tone: 'blue' as const,
     }));
   const allItems = [...fineItems, ...backendReminderItems, ...synthesizedReminderItems];
 
   return (
     <AppScroll>
       <TopBack onPress={goBack} />
-      <Header title="Notifications" subtitle="Fine alerts and weekly reminders in one place." />
+      <Header title={t('Notifications')} subtitle={t('Fine alerts and weekly reminders in one place.')} />
       <View style={{ gap: 10 }}>{allItems.map((item) => <ActivityStatic key={item.id} {...item} />)}</View>
-      {allItems.length === 0 ? <EmptyCard iconSource={ICON_NOTIFICATION} title="You’re all caught up" body="New fine alerts and weekly reminders will appear here." /> : null}
+      {allItems.length === 0 ? <EmptyCard iconSource={ICON_NOTIFICATION} title={t('You’re all caught up')} body={t('New fine alerts and weekly reminders will appear here.')} /> : null}
     </AppScroll>
   );
 }
@@ -1562,12 +1611,12 @@ function MoreScreen({ session, openMain, setRoute, onSignOut }: { session: Sessi
   return (
     <View style={styles.screenFlex}>
       <AppScroll bottomInset>
-        <Header title="More" subtitle="Account, alerts, and app preferences." />
+        <Header title={t('More')} subtitle={t('Account, alerts, and app preferences.')} />
         <ProfileCard session={session} onPress={() => setRoute({ name: 'settings' })} />
-        <MenuRow iconSource={ICON_NOTIFICATION} title="Notifications" subtitle="New fines and weekly reminders" onPress={() => setRoute({ name: 'notifications' })} />
-        <MenuRow iconSource={ICON_MORE} title="Settings" subtitle="Preferences and account" onPress={() => setRoute({ name: 'settings' })} />
-        <MenuRow iconSource={ICON_HOME} title="About Tixradar" subtitle="Version 1.5.0 · NYC vehicle tracking" onPress={() => Alert.alert('About Tixradar', 'Tixradar helps you monitor NYC parking and camera fines plus public NY DMV registration information.')} />
-        <TouchableOpacity style={styles.signOutRow} onPress={onSignOut}><Text style={styles.signOutText}>Sign Out</Text></TouchableOpacity>
+        <MenuRow iconSource={ICON_NOTIFICATION} title={t('Notifications')} subtitle={t('New fines and weekly reminders')} onPress={() => setRoute({ name: 'notifications' })} />
+        <MenuRow iconSource={ICON_MORE} title={t('Settings')} subtitle={t('Preferences and account')} onPress={() => setRoute({ name: 'settings' })} />
+        <MenuRow iconSource={ICON_HOME} title={t('About Tixradar')} subtitle={t('Version 1.5.0 · NYC vehicle tracking')} onPress={() => Alert.alert('About Tixradar', t('Tixradar helps you monitor NYC parking and camera fines plus public NY DMV registration information.'))} />
+        <TouchableOpacity style={styles.signOutRow} onPress={onSignOut}><Text style={styles.signOutText}>{t('Sign Out')}</Text></TouchableOpacity>
       </AppScroll>
       <BottomNav active="more" onTab={openMain} />
     </View>
@@ -1598,24 +1647,25 @@ function SettingsScreen({ session, avatarIndex, setRoute, goBack, onSignOut }: {
   return (
     <AppScroll>
       <TopBack onPress={goBack} />
-      <Header title="Profile & Settings" subtitle="Personalize Tixradar and manage your alerts." />
+      <Header title={t('Profile & Settings')} subtitle={t('Personalize Tixradar and manage your alerts.')} />
       <ProfileCard session={session} avatarSource={AVATAR_ASSETS[avatarIndex]} onPress={() => setRoute({ name: 'profileEdit' })} />
-      <SectionTitle title="Preferences" />
-      <MenuRow iconSource={ICON_NOTIFICATION} title="Notification Preferences" subtitle="New fines and weekly reminders" onPress={() => setShowPrefs(true)} />
-      <MenuRow iconSource={ICON_MORE} title="Privacy & Data" subtitle="How Tixradar uses saved vehicle data" onPress={() => Alert.alert('Privacy & Data', 'Tixradar stores the vehicles you add so it can monitor public fine and registration datasets. Production privacy-policy links should be connected before App Store submission.')} />
-      <SectionTitle title="Account" />
-      <TouchableOpacity style={styles.signOutRow} onPress={onSignOut}><Text style={styles.signOutText}>Sign Out</Text></TouchableOpacity>
+      <SectionTitle title={t('Preferences')} />
+      <MenuRow iconSource={ICON_MORE} title={t('Language')} subtitle={APP_LANGUAGES.find((item) => item.code === getLanguage())?.name ?? 'English'} onPress={() => setRoute({ name: 'language' })} />
+      <MenuRow iconSource={ICON_NOTIFICATION} title={t('Notification Preferences')} subtitle={t('New fines and weekly reminders')} onPress={() => setShowPrefs(true)} />
+      <MenuRow iconSource={ICON_MORE} title={t('Privacy & Data')} subtitle={t('How Tixradar uses saved vehicle data')} onPress={() => Alert.alert('Privacy & Data', t('Tixradar stores the vehicles you add so it can monitor public fine and registration datasets. Production privacy-policy links should be connected before App Store submission.'))} />
+      <SectionTitle title={t('Account')} />
+      <TouchableOpacity style={styles.signOutRow} onPress={onSignOut}><Text style={styles.signOutText}>{t('Sign Out')}</Text></TouchableOpacity>
       <Text style={styles.settingsVersion}>Tixradar 1.5.0</Text>
 
       <Modal animationType="slide" transparent visible={showPrefs} onRequestClose={() => setShowPrefs(false)}>
         <TouchableOpacity style={styles.modalShade} activeOpacity={1} onPress={() => setShowPrefs(false)}>
           <TouchableOpacity style={styles.sheet} activeOpacity={1}>
             <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>Notification Preferences</Text>
-            <Text style={styles.sheetSub}>Choose which Tixradar updates you want to see.</Text>
-            <ToggleRow iconSource={ICON_WARNING} title="New fine alerts" subtitle="Notify me when Tixradar detects a new fine" value={fineAlerts} onValueChange={(value) => void savePrefs({ fineAlerts: value, weeklySummary })} />
-            <ToggleRow iconSource={ICON_WEEKLY_DETAIL} title="Weekly fine reminder" subtitle="Remind me weekly while I still have unpaid fines" value={weeklySummary} onValueChange={(value) => void savePrefs({ fineAlerts, weeklySummary: value })} />
-            <PrimaryButton title="Done" hideArrow onPress={() => setShowPrefs(false)} />
+            <Text style={styles.sheetTitle}>{t('Notification Preferences')}</Text>
+            <Text style={styles.sheetSub}>{t('Choose which Tixradar updates you want to see.')}</Text>
+            <ToggleRow iconSource={ICON_WARNING} title={t('New fine alerts')} subtitle={t('Notify me when Tixradar detects a new fine')} value={fineAlerts} onValueChange={(value) => void savePrefs({ fineAlerts: value, weeklySummary })} />
+            <ToggleRow iconSource={ICON_WEEKLY_DETAIL} title={t('Weekly fine reminder')} subtitle={t('Remind me weekly while I still have unpaid fines')} value={weeklySummary} onValueChange={(value) => void savePrefs({ fineAlerts, weeklySummary: value })} />
+            <PrimaryButton title={t('Done')} hideArrow onPress={() => setShowPrefs(false)} />
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
@@ -1641,21 +1691,21 @@ function ProfileEditScreen({ session, avatarIndex, onAvatarChange, onSaveName, g
 
   return (
     <AppScroll>
-      <TopBack onPress={goBack} center="Edit Profile" />
+      <TopBack onPress={goBack} center={t('Edit Profile')} />
       <View style={styles.profileEditPreview}>
         <Image source={AVATAR_ASSETS[avatarIndex]} style={styles.profileEditAvatar} resizeMode="cover" />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.profileEditName} numberOfLines={1}>{nickname.trim() || 'Tixradar Driver'}</Text>
-          <Text style={styles.profileEditHint}>This is how you’ll appear in the app.</Text>
+          <Text style={styles.profileEditName} numberOfLines={1}>{nickname.trim() || t('Tixradar Driver')}</Text>
+          <Text style={styles.profileEditHint}>{t('This is how you’ll appear in the app.')}</Text>
         </View>
       </View>
-      <SectionTitle title="Choose Avatar" />
+      <SectionTitle title={t('Choose Avatar')} />
       <AvatarPicker selected={avatarIndex} onChange={onAvatarChange} />
-      <SectionTitle title="Nickname" />
-      <Label text="Nickname" />
+      <SectionTitle title={t('Nickname')} />
+      <Label text={t('Nickname')} />
       <Field value={nickname} onChangeText={setNickname} placeholder="John Driver" autoCapitalize="words" maxLength={40} />
-      <Text style={styles.profileFieldHint}>You can change this anytime. Email and phone settings can be added here later.</Text>
-      <PrimaryButton title={saving ? 'Saving…' : 'Save Changes'} hideArrow disabled={saving} onPress={() => void save()} />
+      <Text style={styles.profileFieldHint}>{t('You can change this anytime. Email and phone settings can be added here later.')}</Text>
+      <PrimaryButton title={saving ? t('Saving…') : t('Save Changes')} hideArrow disabled={saving} onPress={() => void save()} />
     </AppScroll>
   );
 }
@@ -1707,12 +1757,12 @@ function TopBack({
 }) {
   return (
     <View style={styles.topBackRow}>
-      <TouchableOpacity style={styles.topBackButton} onPress={onPress} accessibilityRole="button" accessibilityLabel={left === 'back' ? 'Go back' : 'Close'}>
+      <TouchableOpacity style={styles.topBackButton} onPress={onPress} accessibilityRole="button" accessibilityLabel={left === 'back' ? t('Go back') : t('Close')}>
         {left === 'back' ? <IconImage source={ICON_ARROW} size={20} tint={darkTheme ? APP_TEXT : INK} style={{ transform: [{ rotate: '180deg' }] }} /> : <Text style={[styles.topBackGlyph, !darkTheme && { color: INK }]}>{left}</Text>}
       </TouchableOpacity>
       {center ? <Text style={styles.topBackCenter} numberOfLines={1}>{center}</Text> : <View style={{ flex: 1 }} />}
       {rightIconSource && onRightPress ? (
-        <TouchableOpacity style={styles.topBackButton} onPress={onRightPress} accessibilityRole="button" accessibilityLabel={rightAccessibilityLabel || 'More options'}>
+        <TouchableOpacity style={styles.topBackButton} onPress={onRightPress} accessibilityRole="button" accessibilityLabel={rightAccessibilityLabel || t('More options')}>
           <IconImage source={rightIconSource} size={20} tint={darkTheme ? APP_TEXT : INK} />
         </TouchableOpacity>
       ) : <View style={{ width: 44 }} />}
@@ -1743,27 +1793,6 @@ function SecondaryButton({ title, onPress, icon, iconSource }: { title: string; 
 
 function Field({ icon, right, plain, ...props }: ComponentProps<typeof TextInput> & { icon?: string; right?: ReactNode; plain?: boolean }) {
   return <View style={[styles.fieldWrap, plain && { marginTop: 0 }]}>{icon ? <Text style={styles.fieldIcon}>{icon}</Text> : null}<TextInput placeholderTextColor="#6F7F8E" style={styles.fieldInput} {...props} />{right}</View>;
-}
-
-function PickerField({ value, onValueChange, values }: { value: string; onValueChange: (v: string) => void; values: string[] }) {
-  const [visible, setVisible] = useState(false);
-  return (
-    <>
-      <TouchableOpacity style={styles.pickerField} onPress={() => setVisible(true)} activeOpacity={0.84} accessibilityRole="button" accessibilityLabel="Choose state">
-        <Text style={styles.pickerValue}>{stateName(value)} ({value})</Text><Text style={styles.pickerChevron}>⌄</Text>
-      </TouchableOpacity>
-      <Modal transparent animationType="fade" visible={visible} onRequestClose={() => setVisible(false)}>
-        <TouchableOpacity style={styles.modalShade} activeOpacity={1} onPress={() => setVisible(false)}>
-          <TouchableOpacity style={styles.stateSheet} activeOpacity={1}>
-            <View style={styles.sheetHandle} /><Text style={styles.sheetTitle}>Choose State</Text>
-            <ScrollView style={styles.stateList} showsVerticalScrollIndicator={false}>
-              {values.map((v) => <TouchableOpacity key={v} style={[styles.stateOption, value === v && styles.stateOptionActive]} onPress={() => { onValueChange(v); setVisible(false); }}><Text style={[styles.stateOptionText, value === v && styles.stateOptionTextActive]}>{stateName(v)}</Text><Text style={styles.stateCode}>{v}</Text></TouchableOpacity>)}
-            </ScrollView>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
-    </>
-  );
 }
 
 function Label({ text }: { text: string }) { return <Text style={styles.fieldLabel}>{text}</Text>; }
@@ -1809,7 +1838,7 @@ function InfoTile({ iconSource, label, value }: { iconSource: number; label: str
 }
 
 function InfoRow({ iconSource, label, value, trailing, accent, helper, onTrailingPress }: { iconSource: number; label: string; value: string; trailing?: 'copy'; accent?: boolean; helper?: string; onTrailingPress?: () => void }) {
-  return <View style={styles.infoRow}><View style={styles.infoRowIconWrap}><IconImage source={iconSource} size={19} tint={APP_TEXT} /></View><View style={{ flex: 1, minWidth: 0 }}><Text style={styles.infoLabel}>{label}</Text><Text style={[styles.infoValue, accent && { color: APP_GREEN }]} numberOfLines={1}>{value}</Text>{helper ? <Text style={styles.infoHelper}>{helper}</Text> : null}</View>{trailing === 'copy' && onTrailingPress ? <TouchableOpacity style={styles.copyMiniButton} onPress={onTrailingPress} accessibilityLabel="Copy VIN"><IconImage source={ICON_COPY_DETAIL} size={17} tint={APP_TEXT} /></TouchableOpacity> : null}</View>;
+  return <View style={styles.infoRow}><View style={styles.infoRowIconWrap}><IconImage source={iconSource} size={19} tint={APP_TEXT} /></View><View style={{ flex: 1, minWidth: 0 }}><Text style={styles.infoLabel}>{label}</Text><Text style={[styles.infoValue, accent && { color: APP_GREEN }]} numberOfLines={1}>{value}</Text>{helper ? <Text style={styles.infoHelper}>{helper}</Text> : null}</View>{trailing === 'copy' && onTrailingPress ? <TouchableOpacity style={styles.copyMiniButton} onPress={onTrailingPress} accessibilityLabel={t('Copy VIN')}><IconImage source={ICON_COPY_DETAIL} size={17} tint={APP_TEXT} /></TouchableOpacity> : null}</View>;
 }
 
 function DetailLine({ iconSource, label, value, sub }: { iconSource: number; label: string; value: string; sub?: string }) {
@@ -1821,7 +1850,7 @@ function EmptyCard({ icon, iconSource, title, body, button, onPress }: { icon?: 
 }
 
 function BottomNav({ active, onTab }: { active: MainTab; onTab: (tab: MainTab) => void }) {
-  return <View style={styles.bottomNavWrap}><View style={styles.bottomNav}><NavItem iconSource={ICON_HOME} label="Home" active={active === 'home'} onPress={() => onTab('home')} /><NavItem iconSource={ICON_VEHICLES} label="Vehicles" active={active === 'vehicles'} onPress={() => onTab('vehicles')} /><NavItem iconSource={ICON_FINES} label="Fines" active={active === 'fines'} onPress={() => onTab('fines')} /><NavItem iconSource={ICON_MORE} label="More" active={active === 'more'} onPress={() => onTab('more')} /></View></View>;
+  return <View style={styles.bottomNavWrap}><View style={styles.bottomNav}><NavItem iconSource={ICON_HOME} label={t('Home')} active={active === 'home'} onPress={() => onTab('home')} /><NavItem iconSource={ICON_VEHICLES} label={t('Vehicles')} active={active === 'vehicles'} onPress={() => onTab('vehicles')} /><NavItem iconSource={ICON_FINES} label={t('Fines')} active={active === 'fines'} onPress={() => onTab('fines')} /><NavItem iconSource={ICON_MORE} label={t('More')} active={active === 'more'} onPress={() => onTab('more')} /></View></View>;
 }
 
 function NavItem({ iconSource, label, active, onPress }: { iconSource: number; label: string; active: boolean; onPress: () => void }) {
@@ -1837,7 +1866,7 @@ function Chevron({ size = 15, tint = APP_MUTED }: { size?: number; tint?: string
 }
 
 function OfferCard({ offer, onPress }: { offer: Offer; onPress: () => void }) {
-  return <TouchableOpacity style={styles.offerCard} onPress={onPress} activeOpacity={0.88} accessibilityRole="button" accessibilityLabel={offer.title}><Image source={offer.image} style={styles.offerCardImage} resizeMode="cover" /></TouchableOpacity>;
+  return <TouchableOpacity style={styles.offerCard} onPress={onPress} activeOpacity={0.88} accessibilityRole="button" accessibilityLabel={t(offer.title)}><Image source={offer.image} style={styles.offerCardImage} resizeMode="cover" /></TouchableOpacity>;
 }
 
 function MiniFeature({ iconSource, label }: { iconSource: number; label: string }) {
@@ -1858,7 +1887,7 @@ function AvatarPicker({ selected, onChange }: { selected: number; onChange: (ind
 
 function ProfileCard({ session, onPress, avatarSource }: { session: Session; onPress?: () => void; avatarSource?: number }) {
   const initials = (session.user.full_name || session.user.email).split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((s) => s[0]?.toUpperCase()).join('');
-  return <TouchableOpacity style={styles.profileCard} onPress={onPress} disabled={!onPress} activeOpacity={0.85}>{avatarSource ? <Image source={avatarSource} style={styles.profileAvatarImage} resizeMode="cover" /> : <View style={styles.avatar}><Text style={styles.avatarText}>{initials}</Text></View>}<View style={{ flex: 1, minWidth: 0 }}><Text style={styles.profileName}>{session.user.full_name || 'Tixradar Driver'}</Text><Text style={styles.profileEmail} numberOfLines={1}>{session.user.email}</Text></View>{onPress ? <Chevron /> : null}</TouchableOpacity>;
+  return <TouchableOpacity style={styles.profileCard} onPress={onPress} disabled={!onPress} activeOpacity={0.85}>{avatarSource ? <Image source={avatarSource} style={styles.profileAvatarImage} resizeMode="cover" /> : <View style={styles.avatar}><Text style={styles.avatarText}>{initials}</Text></View>}<View style={{ flex: 1, minWidth: 0 }}><Text style={styles.profileName}>{session.user.full_name || t('Tixradar Driver')}</Text><Text style={styles.profileEmail} numberOfLines={1}>{session.user.email}</Text></View>{onPress ? <Chevron /> : null}</TouchableOpacity>;
 }
 
 function MenuRow({ iconSource, title, subtitle, onPress }: { iconSource: number; title: string; subtitle: string; onPress?: () => void }) {
@@ -1874,7 +1903,7 @@ function ActionSheetRow({ iconSource, title, subtitle, onPress, destructive }: {
 }
 
 function CenteredState({ title, body, onBack }: { title: string; body: string; onBack: () => void }) {
-  return <View style={styles.centeredState}><View style={styles.emptyIcon}><IconImage source={ICON_WARNING} size={21} tint={GREEN_DARK} /></View><Text style={styles.successTitle}>{title}</Text><Text style={styles.successSub}>{body}</Text><PrimaryButton title="Go Back" onPress={onBack} /></View>;
+  return <View style={styles.centeredState}><View style={styles.emptyIcon}><IconImage source={ICON_WARNING} size={21} tint={GREEN_DARK} /></View><Text style={styles.successTitle}>{title}</Text><Text style={styles.successSub}>{body}</Text><PrimaryButton title={t('Go Back')} onPress={onBack} /></View>;
 }
 
 // ---------- Helpers ----------
@@ -1891,10 +1920,10 @@ function carOpenCount(detail?: CarDetailResponse) { return detail?.violations.fi
 function toMoney(value: string | number | null | undefined) { const n = Number.parseFloat(String(value ?? '0')); return Number.isFinite(n) ? n : 0; }
 function registrationFlags(reg?: Registration) { if (!reg) return []; return ['scofflaw_indicator', 'suspension_indicator', 'revocation_indicator'].filter((key) => (reg as unknown as Record<string, string | undefined>)[key] === 'Y'); }
 function vehicleDisplayName(detail: CarDetailResponse) { const r = detail.registration?.data; const generated = [r?.model_year, r?.make].filter(Boolean).join(' '); return generated || detail.car.nickname; }
-function formatDate(value?: string | null) { if (!value) return 'Not available'; const date = new Date(value); if (Number.isNaN(date.getTime())) return value.slice(0, 10); return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
-function formatIssueDate(value?: string | null) { if (!value) return 'Date unavailable'; const parts = value.split('/'); if (parts.length === 3) { const [m, d, y] = parts; const date = new Date(Number(y), Number(m) - 1, Number(d)); return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } return formatDate(value); }
-function relativeExpiry(value: string) { const date = new Date(value); const months = Math.round((date.getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 30)); return months >= 0 ? `in about ${months} month${months === 1 ? '' : 's'}` : 'expired'; }
-function stateName(code: string) { return STATE_NAMES[code?.toUpperCase()] || code; }
+function formatDate(value?: string | null) { if (!value) return t('Not available'); const date = new Date(value); if (Number.isNaN(date.getTime())) return value.slice(0, 10); return date.toLocaleDateString(getLocale(), { month: 'short', day: 'numeric', year: 'numeric' }); }
+function formatIssueDate(value?: string | null) { if (!value) return t('Date unavailable'); const parts = value.split('/'); if (parts.length === 3) { const [m, d, y] = parts; const date = new Date(Number(y), Number(m) - 1, Number(d)); return date.toLocaleDateString(getLocale(), { month: 'short', day: 'numeric', year: 'numeric' }); } return formatDate(value); }
+function relativeExpiry(value: string) { const date = new Date(value); const months = Math.round((date.getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 30)); return months >= 0 ? (months === 1 ? t('in about 1 month') : t('in about {count} months', { count: months })) : t('expired'); }
+function stateName(code: string) { const name = STATE_NAMES[code?.toUpperCase()]; return name ? t(name) : code; }
 function normalizeVin(value: string) { return value.toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, '').slice(0, 17); }
 function isValidVin(value: string) { return /^[A-HJ-NPR-Z0-9]{17}$/.test(value); }
 function profileInitials(session: Session) {
@@ -1906,13 +1935,13 @@ function formatCompactMoney(value: number) {
   const rounded = Math.round(value * 100) / 100;
   return Number.isInteger(rounded) ? rounded.toLocaleString('en-US') : rounded.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-function greetingForTime() { const hour = new Date().getHours(); return hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'; }
-async function copyText(value: string, message = 'Copied') { await Clipboard.setStringAsync(value); Alert.alert(message); }
-function friendlyViolation(value?: string) { if (!value) return 'Parking Violation'; const text = value.toLowerCase(); if (text.includes('camera')) return 'Speed Camera'; if (text.includes('bus')) return 'Bus Lane Violation'; if (text.includes('no standing')) return 'No Standing'; if (text.includes('parking')) return value.replace(/\b\w/g, (c) => c.toUpperCase()); return value.replace(/[-_]/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()); }
+function greetingForTime() { const hour = new Date().getHours(); return hour < 12 ? t('Good morning') : hour < 18 ? t('Good afternoon') : t('Good evening'); }
+async function copyText(value: string, message = t('Copied')) { await Clipboard.setStringAsync(value); Alert.alert(message); }
+function friendlyViolation(value?: string) { if (!value) return t('Parking Violation'); const translated = getLanguage() === 'en' ? null : VIOLATION_NAMES[value.trim().toUpperCase()]?.[getLanguage()]; if (translated) return translated; const text = value.toLowerCase(); if (text.includes('camera')) return t('Speed Camera'); if (text.includes('bus')) return t('Bus Lane Violation'); if (text.includes('no standing')) return t('No Standing'); if (text.includes('parking')) return value.replace(/\b\w/g, (c) => c.toUpperCase()); return value.replace(/[-_]/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()); }
 function violationLocation(v: Violation) { return [v.house_number, v.street_name].filter(Boolean).join(' & ') || 'New York City'; }
 function timeAgo(value: string) { const ms = Date.now() - new Date(value).getTime(); const mins = Math.max(1, Math.round(ms / 60000)); if (mins < 60) return `${mins}m ago`; const hours = Math.round(mins / 60); if (hours < 24) return `${hours}h ago`; return `${Math.round(hours / 24)}d ago`; }
-function getErrorMessage(err: unknown) { return err instanceof Error ? err.message : 'Something went wrong. Please try again.'; }
-async function copySummons(value: string) { await Clipboard.setStringAsync(value); Alert.alert('Copied', `Summons #${value} copied to your clipboard.`); }
+function getErrorMessage(err: unknown) { return err instanceof Error ? err.message : t('Something went wrong. Please try again.'); }
+async function copySummons(value: string) { await Clipboard.setStringAsync(value); Alert.alert(t('Copied'), t('Summons #{number} copied to your clipboard.', { number: value })); }
 
 // ---------- Styles ----------
 
@@ -1926,6 +1955,12 @@ const styles = StyleSheet.create({
   launchTag: { fontSize: 11, color: '#AEB7AF', letterSpacing: 2.3, marginTop: 12, textAlign: 'center' },
 
   welcomePage: { flex: 1, backgroundColor: APP_BG },
+  languageContent: { flex: 1, justifyContent: 'center', paddingHorizontal: 24, width: '100%', maxWidth: 480, alignSelf: 'center', gap: 12 },
+  languageBack: { position: 'absolute', top: 12, left: 24 },
+  languageButton: { minHeight: 64, borderRadius: 18, backgroundColor: APP_CARD_ALT, borderWidth: 1, borderColor: APP_BORDER, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22, gap: 14 },
+  languageButtonActive: { borderColor: APP_BLUE, backgroundColor: APP_BLUE_SOFT },
+  languageFlag: { fontSize: 26 },
+  languageName: { flex: 1, color: APP_TEXT, fontSize: 17, fontWeight: '800' },
   welcomeContent: { width: '100%', maxWidth: 520, alignSelf: 'center', paddingHorizontal: 22, paddingTop: 28, paddingBottom: 18 },
   welcomeBrandRow: { marginBottom: 26 },
   welcomeEyebrow: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7, backgroundColor: APP_BLUE_SOFT, borderWidth: 1, borderColor: '#224867' },
@@ -2224,16 +2259,6 @@ const styles = StyleSheet.create({
   lookupTitle: { color: APP_TEXT, fontSize: 30, fontWeight: '900', letterSpacing: -1.1, textAlign: 'center', marginTop: 24 },
   lookupSub: { color: APP_MUTED, fontSize: 14, lineHeight: 21, textAlign: 'center', marginTop: 8, marginBottom: 22, paddingHorizontal: 10 },
   fieldLabel: { color: APP_TEXT, fontSize: 12, fontWeight: '800', marginTop: 14, marginBottom: 7 },
-  pickerField: { minHeight: 58, borderRadius: 17, borderWidth: 1, borderColor: APP_BORDER, backgroundColor: APP_CARD, paddingHorizontal: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  pickerValue: { color: APP_TEXT, fontSize: 15, fontWeight: '700' },
-  pickerChevron: { color: APP_MUTED, fontSize: 22, marginTop: -5 },
-  stateSheet: { width: '100%', maxWidth: 520, alignSelf: 'center', maxHeight: '78%', backgroundColor: APP_CARD, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 18, paddingTop: 10, paddingBottom: 22 },
-  stateList: { marginTop: 12 },
-  stateOption: { minHeight: 52, borderRadius: 15, paddingHorizontal: 14, marginBottom: 7, backgroundColor: APP_CARD_ALT, borderWidth: 1, borderColor: APP_BORDER, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  stateOptionActive: { borderColor: APP_BLUE, backgroundColor: APP_BLUE_SOFT },
-  stateOptionText: { color: APP_TEXT, fontSize: 13, fontWeight: '800' },
-  stateOptionTextActive: { color: '#FFFFFF' },
-  stateCode: { color: APP_MUTED, fontSize: 11, fontWeight: '800' },
   recentRow: { minHeight: 66, backgroundColor: '#fff', borderWidth: 1, borderColor: BORDER, borderRadius: 17, padding: 12, flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   recentClock: { width: 38, color: INK, fontSize: 19 },
   lookupResultHero: { minHeight: 104, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },

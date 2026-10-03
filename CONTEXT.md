@@ -76,6 +76,18 @@ to the original English string rather than breaking. Language choice is stored i
 Static markup is translated via `data-i18n` / `data-i18n-placeholder` attributes;
 dynamically rendered strings go through the `t(key, vars)` helper.
 
+**Mobile (Tixradar v1.5.0 redesign) uses its own system, not `mobile/src/i18n.ts`'s
+`I18N` table** (that table belongs to the old lookup UI; only its `VIOLATION_NAMES` is
+reused). `mobile/src/strings.ts` exposes `t('English text', { vars })` keyed by the English
+UI text itself, with `{name}` placeholders; translations live in
+`mobile/src/translations.ts` (`ru`, `ka`, `es`). Missing keys fall back to English. The
+language is chosen on the very first screen (four standalone buttons, nothing else) and
+can be changed later in Profile & Settings → Language; it's stored in AsyncStorage under
+`tixradar:language`. Module-level data (e.g. `OFFERS`) is translated where it's rendered
+(`t(offer.title)`), not where it's defined. When adding UI text: wrap it in `t()` and add
+the ru/ka/es entry to `translations.ts`. Server-generated notification titles (`cron.js`)
+are still English-only.
+
 ## Mobile app specifics
 
 - `mobile/src/api.ts` has `API_BASE_URL` **hardcoded to a LAN IP** for phone-over-WiFi
